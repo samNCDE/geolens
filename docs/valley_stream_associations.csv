@@ -1,0 +1,12 @@
+valley_type,stable,unstable,wording
+I,A,,A and Aa+
+II,B,,B
+III,A B D G,,"A, B, G, and D"
+IV,F,,F
+V,C D G,,"C, D, G"
+VI,B C F,G,Mostly B with C and F; some G (G observed under fault disequilibrium)
+VII,A G,,A and G
+VIII,C E,D F G,"C and E / D, F, and G (depending on local streambed and riparian conditions)"
+IX,C D,,C and D
+X,C DA E,F G,"E or C and DA, G, and F (G and F common where local base grades have been changed)"
+XI,C DA E,,DA; C and E

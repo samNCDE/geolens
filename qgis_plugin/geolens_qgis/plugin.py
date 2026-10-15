@@ -3,7 +3,7 @@ from qgis.core import QgsApplication, QgsSettings
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox
 
 from .provider import GeolensProvider
-from .runner import SETTINGS_KEY, find_python, probe
+from .runner import SETTINGS_KEY, find_python, numba_warning, probe
 
 
 class GeolensPlugin:
@@ -36,10 +36,12 @@ class GeolensPlugin:
         if py:
             s.setValue(SETTINGS_KEY, py)
             v = tried[py].get("version")
+            warn = numba_warning(tried[py])
             QMessageBox.information(
                 self.iface.mainWindow(), "geolens",
                 f"geolens {v} found:\n{py}\n\nThe tools are in the "
-                f"Processing Toolbox under 'geolens'.")
+                f"Processing Toolbox under 'geolens'."
+                + (f"\n\nWARNING: {warn}" if warn else ""))
             return
         msg = ("The geolens environment was not found.\n\n"
                "If geolens is not installed yet: unzip the geolens folder "

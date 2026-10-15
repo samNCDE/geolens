@@ -196,6 +196,9 @@ class FindEnvironment(_Tool):
             ga.find_python()
         ver = tried[py].get("version")
         arcpy.AddMessage("geolens %s found:\n  %s" % (ver, py))
+        warn = geolens_runner.numba_warning(tried[py])
+        if warn:
+            arcpy.AddWarning(warn)
         v["version"].value = ver
 
 
@@ -518,13 +521,20 @@ class Step4Stability(_Tool):
         "stable (a stream type Rosgen associates with the valley type), "
         "unstable (one he lists for it only out of balance), check (not "
         "associated at all: a departure, or a wrong type) or unknown. Source: "
-        "NRCS NEH 654 TS3E Table TS3E-3, after Rosgen (1996).")
+        "NRCS NEH 654 TS3E Table TS3E-3, after Rosgen (1996). To judge with "
+        "your own table, edit a copy of docs\\valley_stream_associations.csv "
+        "and give it as the association table: the run keeps it, so later "
+        "steps use it too.")
 
     def parameters(self):
         return [
             P("Valley types (valley_types.gpkg)", "valley", "GPFeatureLayer"),
             P("Stream types (stream_types.gpkg)", "stream", "GPFeatureLayer"),
             P("Output folder", "out_folder", "DEFolder"),
+            P("Association table (CSV, optional)", "table", "DEFile",
+              required=False),
+            P("Go back to the built-in table", "builtin", "GPBoolean",
+              required=False, default=False),
             D("Stable / unstable form", "out_stability"),
         ]
 
@@ -534,7 +544,10 @@ class Step4Stability(_Tool):
         res = ga.run("stream_stability", {
             "valley_types": ga.vector_path(v["valley"], out, "valley_types"),
             "stream_types": ga.vector_path(v["stream"], out, "stream_types"),
+            "association_table": ("builtin" if v["builtin"].value
+                                  else ga.text(v["table"]) or None),
         }, out, "stable or unstable form")
+        arcpy.AddMessage("judged with: %s" % res.get("source"))
         arcpy.AddMessage("reaches by form: %s" % res.get("counts"))
         ga.set_output(v, "out_stability", res.get("stability"))
 

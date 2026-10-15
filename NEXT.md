@@ -5,17 +5,17 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 15 Oct 2026 session)
 
-**State.** v0.30.0 beta. The full test suite passes on Linux with numba
-0.61.2. The release zip (`geolens_v0.30.0-beta.zip`) and a git bundle
-(`geolens_v0.30.0.bundle`, one commit, ready to push) are in Sam's Claude
-outputs folder.
+**State.** v0.30.1 beta. The full test suite passes on Linux with numba
+0.61.2. The release zip (`geolens_v0.30.1-beta.zip`) and a git bundle
+(`geolens_v0.30.1.bundle`, ready to push) are in Sam's Claude outputs
+folder.
 
 **Not yet done:**
 - **Not pushed to GitHub.** This session's GitHub access was not enabled
   for the repo. To push, create an empty `samNCDE/geolens` repo, then run:
 
   ```
-  git clone geolens_v0.30.0.bundle geolens
+  git clone -b main geolens_v0.30.1.bundle geolens
   cd geolens
   git remote set-url origin https://github.com/samNCDE/geolens.git
   git push -u origin main
@@ -34,7 +34,12 @@ outputs folder.
 
 **Next, in order:**
 1. Sam's first real runs in ArcGIS Pro, and fixing what they turn up.
-2. SAR (Sentinel-1 RTC on the Planetary Computer), the way NAIP NDVI is used.
+2. SAR: read [docs/SAR_FEASIBILITY.md](docs/SAR_FEASIBILITY.md). It cannot
+   be streamed anonymously the way NAIP is. NASA's OPERA RTC-S1 (30 m,
+   free) can be looked at in ArcGIS Pro today as an image service. The
+   one-hour experiment there decides whether it is worth building.
+   Building needs Sam's choice: a free Earthdata login, or a Planetary
+   Computer account.
 3. Rosgen's new valley-type names (waiting on Sam's table).
 4. Validation against surveyed bankfull.
 
@@ -42,6 +47,35 @@ outputs folder.
 compile pysheds' depression filling. The landscape pass died at its first
 step with "KeyError: int64 generator". numba is now capped below 0.62 in
 pyproject.toml and install.py. Existing environments are unaffected.
+From v0.30.1 an environment upgraded past the cap is caught in three
+places: *Find the geolens environment* warns, `install.py --check` reports
+it as a problem, and the routing error names the fix.
+
+## v0.30.1 (beta): editable association table, numba guard, SAR note
+
+- **Editable valley–stream association table.** It is
+  `docs/valley_stream_associations.csv` (the built-in TS3E-3 table; a test
+  keeps the two identical). Pass an edited copy to `api.stream_stability(...,
+  association_table=)` or to toolbox step 4 (*Association table*). It is
+  checked first, with row numbers in the errors. The run keeps a copy
+  (`association_table.csv`), so steps 2 and 3 re-judge with it. Passing
+  `"builtin"`, or the toolbox's *Go back to the built-in table*, drops the
+  copy. `form_source` names the table used. Not yet in the whole routine:
+  run step 4 with the table after it.
+
+- **numba guard.** The environment probe reports numba's version. *Find the
+  geolens environment* (ArcGIS) and *Setup* (QGIS) warn at 0.62 or newer.
+  `install.py --check` lists it as a problem. A routing failure raised
+  inside numba ≥0.62 becomes "pysheds needs numba below 0.62 … pip install
+  "numba>=0.57,<0.62"". It stays quiet on out-of-memory errors and on
+  numba versions the pin allows.
+- The doctor's fix for a numpy/numba ABI mismatch said `pip install -U
+  numba`, which would now install 0.68 and break routing. It now names the
+  pinned range.
+- **`qgis_plugin/build_plugin_zip.py`** rebuilds the plugin zip. A test fails
+  while the zip and the plugin folder disagree. The v0.30.0 zip matched its
+  source; nothing before this checked that.
+- **docs/SAR_FEASIBILITY.md**: see "Next" above.
 
 **New this session:** *1b. Calibrate confinement breaks*, for the toolbox and
 as `api.calibrate_confinement_for_run`. Later steps use the calibrated

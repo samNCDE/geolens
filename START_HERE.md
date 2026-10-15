@@ -118,7 +118,7 @@ ArcGIS.
    Add Toolbox* and choose `arcgis_toolbox\geolens.pyt` in the geolens
    folder.
 2. **Check it:** run *0 Setup ▸ Find the geolens environment*. It should
-   report "geolens 0.30.0 found". If it can't find the environment, give it
+   report "geolens 0.30.1 found". If it can't find the environment, give it
    the environment's `python.exe`, which the installer prints. The tool
    remembers it.
 3. **Run the whole routine** (*1 Whole routine*), or **one step at a time**

@@ -702,10 +702,28 @@ type is judged under every candidate and reported only if they agree.
 `form_note` says why in words. `stream_stability.gpkg` comes with a QGIS style
 coloured by status, and hovering over a reach shows its section sheet.
 
+**Your own table (v0.30.1).** `docs/valley_stream_associations.csv` is this
+table as a CSV: one row per valley type, with columns `valley_type`, `stable`,
+`unstable` and `wording`, and letters separated by spaces or commas. Extra
+columns such as notes are ignored. To use your own:
+
+1. Edit a copy of the CSV. Excel is fine.
+2. Pass it to `api.stream_stability(..., association_table="mine.csv")`, or
+   give it to toolbox step *4. Stable or unstable form*.
+
+The table is checked first. An unknown letter, a valley type listed twice, or
+a letter that is both stable and unstable stops the step with the row number.
+The run keeps a copy as `association_table.csv`, so re-running step 2 or 3
+re-judges with the same table. `form_source` and the step's messages say which
+table was used. `association_table="builtin"` (the toolbox's *Go back to the
+built-in table*) drops the run's copy. `api.association_table(path,
+write=True)` writes the built-in table anywhere.
+
 Two things to know. The newer descriptive valley-type names Sam uses are not
-in this table yet (the crosswalk is waiting on his copy of Rosgen's list). And
-with the v0.28 bankfull method most stream types are medium confidence at
-best, so read `check` and `unstable` as "go and look", not as a finding.
+in this table yet (the crosswalk is waiting on his copy of Rosgen's list); a
+custom table can carry them as soon as the valley types use them. And with the
+v0.28 bankfull method most stream types are medium confidence at best, so read
+`check` and `unstable` as "go and look", not as a finding.
 
 ### Erosion features — gullies
 

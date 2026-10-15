@@ -442,12 +442,23 @@ def doctor():
         try:
             import numba  # noqa: F401
             say(f"  numba       {numba.__version__}  (numpy ABI ok)")
+            try:
+                too_new = tuple(int(x) for x in numba.__version__.split(".")[:2]) >= (0, 62)
+            except ValueError:
+                too_new = False
+            if too_new:
+                problems.append(
+                    f"numba {numba.__version__} is too new for pysheds: flow routing "
+                    f"fails to compile (0.61.2 is tested; 0.68 fails). Fix: "
+                    f'pip install "numba>=0.57,<0.62"'
+                )
         except Exception as e:
             msg = f"{type(e).__name__}: {e}".split("\n")[0]
             if "numpy" in msg.lower():
                 problems.append(
                     f"numba and numpy disagree: {msg}. numpy was upgraded after "
-                    f"numba was installed. Fix: pip install -U numba, or pin numpy "
+                    f"numba was installed. Fix: pip install \"numba>=0.57,<0.62\" "
+                    f"(not a bare -U: numba 0.62+ breaks pysheds), or pin numpy "
                     f"to the version numba names."
                 )
             else:

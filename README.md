@@ -107,6 +107,7 @@ See [RUNNING.md](RUNNING.md).
 | `docs/geolens_technical_summary_v0.28.pdf` | Methods and references. |
 | [docs/ARCGIS_TEST_CHECKLIST.md](docs/ARCGIS_TEST_CHECKLIST.md) | A 30-minute first run of every toolbox tool, and what to report. |
 | [NEXT.md](NEXT.md) | Working log: what changed in each version, known weaknesses, what is next. |
+| [docs/SAR_FEASIBILITY.md](docs/SAR_FEASIBILITY.md) | Whether Sentinel-1 radar could separate riparian woodland from irrigated fields. Not built. |
 
 ## Development
 

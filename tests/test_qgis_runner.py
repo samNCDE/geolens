@@ -132,3 +132,56 @@ def test_a_callback_that_raises_stops_the_run(runner, tmp_path, monkeypatch):
         runner.run_api(sys.executable, "anything", {}, str(tmp_path),
                        on_progress=boom)
     assert time.monotonic() - t0 < 20
+
+
+def test_numba_too_new_is_flagged(runner):
+    # numba 0.68 cannot compile pysheds' routing; the installers pin <0.62.
+    assert runner.numba_warning({"numba": "0.61.2"}) == ""
+    assert runner.numba_warning({}) == ""
+    assert runner.numba_warning({"numba": "garbage"}) == ""
+    warn = runner.numba_warning({"numba": "0.68.0"})
+    assert "0.68.0" in warn and "numba>=0.57,<0.62" in warn
+
+
+def test_probe_reports_numba_version(runner):
+    info = runner.probe(sys.executable)
+    if "numba" in info.get("missing", []):
+        pytest.skip("numba not installed here")
+    assert info.get("numba", "").count(".") >= 1
+
+
+def test_numba_failure_in_routing_names_the_fix(monkeypatch):
+    numba = pytest.importorskip("numba")
+    from geolens.landscape.terrain import numba_hint
+    # numba 0.68's failure: a plain KeyError from numba's type inference.
+    code = compile("raise KeyError('int64 generator')",
+                   "/site-packages/numba/core/typeinfer.py", "exec")
+    try:
+        try:
+            exec(code)
+        except KeyError as inner:
+            raise RuntimeError("pysheds wrapper") from inner
+    except RuntimeError as outer:
+        failure = outer
+    assert numba_hint(failure) == ""              # 0.61.2: not the cause
+    monkeypatch.setattr(numba, "__version__", "0.68.0")
+    hint = numba_hint(failure)
+    assert "numba>=0.57,<0.62" in hint and "int64 generator" in hint
+    assert numba_hint(ValueError("not numba")) == ""
+    assert numba_hint(MemoryError()) == ""
+
+
+def test_plugin_zip_matches_the_folder():
+    import zipfile
+    spec = importlib.util.spec_from_file_location(
+        "build_plugin_zip", ROOT / "qgis_plugin" / "build_plugin_zip.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    want = {p.relative_to(mod.HERE).as_posix(): p.read_bytes()
+            for p in mod.plugin_files()}
+    with zipfile.ZipFile(mod.ZIP) as z:
+        have = {n: z.read(n) for n in z.namelist() if not n.endswith("/")}
+    stale = sorted(n for n in want.keys() | have.keys()
+                   if want.get(n) != have.get(n))
+    assert not stale, ("the plugin zip is stale (%s); run "
+                       "python qgis_plugin/build_plugin_zip.py" % stale)

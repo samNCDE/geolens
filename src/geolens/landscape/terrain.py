@@ -518,6 +518,48 @@ def _check_hand_file(hand_path: Path, dem_path: Path, warnings: list[str],
     return n
 
 
+def _raised_in_numba(e: BaseException) -> bool:
+    if type(e).__module__.startswith("numba"):
+        return True
+    tb = e.__traceback__
+    while tb is not None:
+        if "/numba/" in tb.tb_frame.f_code.co_filename.replace("\\", "/"):
+            return True
+        tb = tb.tb_next
+    return False
+
+
+def numba_hint(exc: BaseException) -> str:
+    """The fix for numba failing to compile pysheds, or ''.
+
+    pysheds' routing is numba-compiled, and numba 0.68 cannot compile its
+    depression filling: the pass died at its first step with "KeyError:
+    int64 generator", raised deep in numba's type inference, which says
+    nothing a user can act on. The installers pin numba below 0.62; this
+    names the fix for an environment upgraded since. It stays quiet on a
+    numba the pin allows, and on running out of memory.
+    """
+    if isinstance(exc, MemoryError):
+        return ""
+    e, hops = exc, 0
+    while e is not None and hops < 5 and not _raised_in_numba(e):
+        e, hops = e.__cause__ or e.__context__, hops + 1
+    if e is None or not _raised_in_numba(e):
+        return ""
+    try:
+        import numba
+        ver = numba.__version__
+        if tuple(int(x) for x in ver.split(".")[:2]) < (0, 62):
+            return ""
+    except Exception:                                          # noqa: BLE001
+        return ""
+    first = (str(e).strip().splitlines() or [""])[0][:200]
+    return (f"Flow routing failed to compile in numba {ver} "
+            f"({type(e).__name__}: {first}). pysheds needs numba below 0.62 "
+            f"(0.61.2 is tested). In the geolens environment run: "
+            f'pip install "numba>=0.57,<0.62"')
+
+
 def _run_pysheds(dem_path: Path, out_dir: Path, threshold_cells: int,
                  warnings: list[str], units=None) -> dict[str, str]:
     _pysheds_numpy2_shim()
@@ -1171,7 +1213,13 @@ def build_terrain(
         target = cache_dir if reuse_routing else out_dir
         target.mkdir(parents=True, exist_ok=True)
         runner = _run_pysheds if chosen == "pysheds" else _run_whitebox
-        paths = runner(dem_p, target, threshold_cells, warnings, units)
+        try:
+            paths = runner(dem_p, target, threshold_cells, warnings, units)
+        except Exception as exc:
+            hint = numba_hint(exc) if chosen == "pysheds" else ""
+            if hint:
+                raise GeolensError(hint) from exc
+            raise
         if reuse_routing:
             _write_routing_manifest(cache_dir, paths, chosen, dem_p,
                                     threshold_cells)

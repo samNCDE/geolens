@@ -821,7 +821,8 @@ def plot_stream_sections(stream_types_dir: str, sections: bool = True,
 
 
 def stream_stability(valley_types: str, stream_types: str,
-                     out_prefix: str = "stability") -> dict[str, Any]:
+                     out_prefix: str = "stability",
+                     association_table: str | None = None) -> dict[str, Any]:
     """Is each reach's stream type a stable form for its valley type?
 
     Joins ``valley_types.gpkg`` and ``stream_types.gpkg`` from one run on
@@ -834,10 +835,36 @@ def stream_stability(valley_types: str, stream_types: str,
     the lower of the two classifications' confidence. Source: NRCS NEH 654
     TS3E Table TS3E-3, after Rosgen (1996). Runs by itself at the end of
     ``landscape_pass``; call this on an earlier run's two layers.
+
+    ``association_table``: a CSV in the form of
+    ``docs/valley_stream_associations.csv`` to judge with instead. The run
+    keeps a copy (``association_table.csv``) and later steps re-judge with
+    it; ``"builtin"`` goes back to the built-in table.
     """
     from .landscape.stability import stream_stability as _ss
 
-    return _ss(valley_types, stream_types, out_prefix=out_prefix)
+    return _ss(valley_types, stream_types, out_prefix=out_prefix,
+               association_table=association_table)
+
+
+def association_table(path: str, write: bool = False) -> dict[str, Any]:
+    """Check a valley/stream association table CSV, or write the built-in one.
+
+    ``write=True`` writes the built-in table to ``path`` as a CSV to edit.
+    Otherwise reads ``path`` and returns its rows, raising a plain message on
+    the first problem (an unknown letter, a valley type listed twice, a
+    letter both stable and unstable).
+    """
+    from .landscape.stability import (read_association_table,
+                                      write_association_table)
+
+    if write:
+        write_association_table(path)
+    table = read_association_table(path)
+    return {"path": str(path), "valley_types": len(table),
+            "rows": {v: {"stable": sorted(ok), "unstable": sorted(bad),
+                         "wording": words}
+                     for v, (ok, bad, words) in table.items()}}
 
 
 def representative_sections(

@@ -114,10 +114,31 @@ _PROBE = (
     "except Exception as e: out['error']=repr(e)\n"
     "for n in ('rasterio','geopandas','shapely','pyproj','numpy','pandas',\n"
     "          'scipy','skimage','numba','pysheds','matplotlib'):\n"
-    "    try: importlib.import_module(n)\n"
-    "    except Exception: out['missing'].append(n)\n"
+    "    try: m=importlib.import_module(n)\n"
+    "    except Exception: out['missing'].append(n); continue\n"
+    "    if n=='numba': out['numba']=str(getattr(m,'__version__',''))\n"
     "print('GEOLENS_PROBE'+json.dumps(out))\n"
 )
+
+# pysheds' flow routing is numba-compiled, and numba 0.68 cannot compile one
+# of its generators: every landscape pass dies in a TypingError about pysheds
+# internals. The installers pin numba below this; an environment upgraded
+# afterwards (conda update --all, pip install -U numba) gets this warning.
+NUMBA_BELOW = (0, 62)
+
+
+def numba_warning(info: dict[str, Any]) -> str:
+    """Why this environment's numba will break flow routing, or ''."""
+    ver = str(info.get("numba") or "")
+    try:
+        major, minor = (int(x) for x in ver.split(".")[:2])
+    except ValueError:
+        return ""
+    if (major, minor) < NUMBA_BELOW:
+        return ""
+    return ("numba %s is too new for pysheds' flow routing (0.61.2 is "
+            "tested; 0.68 fails). In the geolens environment run:\n"
+            "  pip install \"numba>=0.57,<0.62\"" % ver)
 
 
 def probe(python: str, timeout: float = 180.0) -> dict[str, Any]:
