@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+_backup/
+
+# What geolens writes when the examples, notebook or tests run
+geolens_out/
+quickstart_out/
+notebooks/geolens_out/
+tests/*_out/
+tests/out/
+tests/docout/
+tests/fixture/
+.geolens_cache/
+*.gdb/
+
+# Notebook step 1 has Windows example paths; run on Linux they make "C:"
+C:/

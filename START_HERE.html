@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>geolens: start here</title>
+<style>
+body { font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; color: #1b1b1a;
+       background: #fcfcfb; max-width: 880px; margin: 0 auto; padding: 24px 16px 60px; }
+h1 { font-size: 28px; margin: 0 0 4px; } h2 { font-size: 20px; margin-top: 34px;
+       border-bottom: 1px solid #e4e3df; padding-bottom: 4px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 12px 0; }
+th, td { border: 1px solid #e4e3df; padding: 6px 8px; text-align: left; vertical-align: top; }
+th { background: #f3f2ef; }
+code { background: #f3f2ef; padding: 1px 4px; border-radius: 4px; font-size: 13px; }
+pre { background: #f3f2ef; padding: 12px; border-radius: 6px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+a { color: #2a78d6; }
+</style></head><body>
+<h1>geolens — start here</h1>
+<p><em>Version 0.30 (beta). What it does, how to run it (from ArcGIS Pro, Jupyter or
+QGIS), and how much to trust each result. About ten minutes to read.</em></p>
+<p>geolens maps valley and channel form from a lidar DEM, built for the arid
+Southwest. It is open source (MIT), runs from a Jupyter notebook on your own
+machine, and needs no ArcGIS licence. Everything it makes is an ordinary
+GeoPackage, GeoTIFF, CSV or PNG that opens in QGIS or ArcGIS Pro.</p>
+<hr />
+<h2>What it does</h2>
+<p>One <strong>landscape pass</strong> takes a DEM through these steps. Each step writes its
+own folder under your output folder.</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>What it works out</th>
+<th>Main output</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1. Terrain</td>
+<td>Fills pits, routes flow, finds the stream network, computes HAND (height above the nearest drainage) and slope</td>
+<td><code>terrain_dir/</code>; the flow routing is cached, so a second run on the same DEM skips it</td>
+</tr>
+<tr>
+<td>2. Valley bottom</td>
+<td>Low ground connected to the network, from HAND plus slope evidence</td>
+<td><code>valley_dir/valley_bottom.gpkg</code></td>
+</tr>
+<tr>
+<td>3. Segments and confinement</td>
+<td>Cuts the network into ~500 m reaches and compares valley width with channel width (the confinement ratio)</td>
+<td><code>classified_dir/segments_classified.gpkg</code></td>
+</tr>
+<tr>
+<td>4. Valley form, alluvial fans and Rosgen valley types</td>
+<td>Cross-sections from the valley floor up to the divides give floor width, side slopes and shape; a fan search finds cones below canyon mouths (Type III); with geology, these give Rosgen valley types I–XI</td>
+<td><code>valley_types_dir/valley_types.gpkg</code>, <code>valley_extent_dir/valley_extent.gpkg</code>, <code>fans_dir/</code></td>
+</tr>
+<tr>
+<td>5. Rosgen stream types</td>
+<td>Five channel cross-sections per reach give bankfull width and depth, width/depth ratio and entrenchment; with slope and sinuosity, these give a Rosgen letter (A–G)</td>
+<td><code>stream_types_dir/</code> — reaches, sections, bank points, <strong>a plot of every section</strong></td>
+</tr>
+<tr>
+<td>6. Stable or unstable form</td>
+<td>Each reach's stream type judged against its valley type: <strong>stable</strong>, <strong>unstable</strong>, <strong>check</strong> or <strong>unknown</strong> (Rosgen's valley–stream type associations, NRCS NEH 654 TS3E)</td>
+<td><code>stability_dir/stream_stability.gpkg</code></td>
+</tr>
+<tr>
+<td>7. (separate cells)</td>
+<td>Gullies, NAIP imagery and NDVI, a riparian band</td>
+<td><code>gullies_dir/</code>, <code>naip_dir/</code>, <code>riparian_dir/</code></td>
+</tr>
+</tbody>
+</table>
+<p>Every run also logs its settings, timings and output files to <code>runs/</code> inside
+the output folder. When you are asking "which settings made this layer?",
+that folder has the answer.</p>
+<h2>How much to trust it</h2>
+<p>This is the honest state as of v0.28, from Sam's review of the Cherokee Bill
+and Ruidoso runs and from checks against Moody et al. (2003).</p>
+<table>
+<thead>
+<tr>
+<th>Result</th>
+<th>Status</th>
+<th>How to use it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Valley bottom and valley extent</td>
+<td><strong>Working well</strong></td>
+<td>Use as mapped.</td>
+</tr>
+<tr>
+<td>Rosgen valley types</td>
+<td><strong>Working well</strong></td>
+<td>Without geology, types II/V/VI and VIII–XI stay unresolved on purpose; they list their candidates instead of guessing.</td>
+</tr>
+<tr>
+<td>Alluvial fans (Type III)</td>
+<td><strong>New in v0.29, checked on synthetic fans only</strong></td>
+<td>A reach is Type III when half of it lies on a detected fan. Only cone-shaped regions count as fans. On Ruidoso (10 m) all 26 candidates were strips of trunk-valley floor below tributary mouths, so it found none. Review <code>fans_dir/fan_candidates.gpkg</code>, where every candidate has the reason it was kept or turned down.</td>
+</tr>
+<tr>
+<td>Confinement classes</td>
+<td><strong>Good once calibrated</strong></td>
+<td>The default class breaks (2 and 5) rarely transfer between landscapes. Set them from your own percentiles in notebook step 6.</td>
+</tr>
+<tr>
+<td>Rosgen stream types</td>
+<td><strong>Screening only</strong></td>
+<td>Bankfull comes from the regional curve's depth (v0.28); check the section plots before relying on a type (see below).</td>
+</tr>
+<tr>
+<td>Stable / unstable form</td>
+<td><strong>As good as the two types it compares</strong></td>
+<td><code>form_confidence</code> is the lower of the two. A <code>check</code> is a reach whose stream type is not one Rosgen associates with its valley type: a real departure, or a wrong type. Look before calling it unstable.</td>
+</tr>
+<tr>
+<td>Gullies</td>
+<td><strong>Experimental</strong></td>
+<td>In steep mountain terrain most "gullies" are headwater ravines. Treat widths, depths and volumes as unreliable. The polygon layer is now off by default.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why stream types are screening only.</strong> Bankfull is hard to see on a DEM.
+The first method (to v0.27) raised the water from the lowest point of each
+section until the width jumped. On Ruidoso that picked depths a median
+2–2.6× Moody et al.'s (2003) New Mexico field bankfull in drainages under
+20 km² — usually the top of a small incised channel, or a low-flow thread in a
+wide sandy wash — and those too-deep picks inflated the entrenchment ratio as
+well.</p>
+<p><strong>Since v0.28 bankfull is the regional curve's depth</strong> (Moody's, for the
+drainage area) above the lowest point, and the DEM supplies the width and
+shape at that depth. Where that depth would spill a small channel onto a flat
+floor, the depth is lowered until the width is plausible. It is consistent
+from section to section and matches Moody's field width/depth better, but it
+leans on the curve, so no reach it types is rated above <em>medium</em> confidence,
+and it has not been checked against surveyed bankfull on this ground. Wide
+sandy washes now come out D (braided) and small incised channels B, where the
+old method said C. The old picker still runs as a check: purple dashed on
+every section plot, <code>picker_*</code> columns, <code>picker_bank_top</code> points. Where the
+two disagree, look. <code>bankfull_method="picker"</code> brings the old behaviour back.</p>
+<h2>Install (Windows; you need to be an admin on the machine)</h2>
+<ol>
+<li>Unzip the folder somewhere permanent, e.g. <code>Documents\Tools\geolens</code>.</li>
+<li>Double-click <strong><code>install_windows.bat</code></strong>. The first time takes 5–15 minutes,
+   mostly downloading. It builds its own Python environment, tests itself on
+   a synthetic valley with a known channel, and prints the command that
+   starts the notebook.</li>
+<li><strong>Updating:</strong> unzip the new version anywhere and run its installer. It
+   finds the existing install, updates the code in place, and leaves the
+   environment alone.</li>
+</ol>
+<p><a href="INSTALL.md">INSTALL.md</a> covers the manual route and what to do when the
+install fails.</p>
+<h2>Run it</h2>
+<ol>
+<li>Start Jupyter with the command the installer printed, then open
+   <strong><code>notebooks/geolens_start.ipynb</code></strong>.</li>
+<li><strong>Edit the one cell in step 1:</strong>
+   - <code>DEM</code>: your DEM. Lidar at 0.5–2 m is what the stream types need.
+   - <code>OUT_DIR</code>: must be <em>outside</em> your data folders; geolens refuses to write
+     inside them.
+   - <code>GEOLOGY = "auto"</code>: downloads USGS surficial geology.
+   - <code>REGIONAL_CURVE = "arid_sw_nm"</code>: Moody et al. 2003, eastern Arizona /
+     New Mexico. Use <code>"arid_sw_az"</code> for central and southern Arizona.</li>
+<li>Run the cells top to bottom. Step 2 estimates memory before anything
+   expensive runs. If the DEM will not fit, step 3 coarsens it for you.</li>
+<li><strong>Step 6: calibrate the confinement breaks.</strong> It takes seconds and nothing
+   is rerun.</li>
+</ol>
+<p><strong>What to expect.</strong> On a 128 GB workstation:</p>
+<ul>
+<li><strong>Ruidoso</strong> (1.785 billion cells at 0.76 m): the landscape pass took
+  <strong>72 minutes</strong> with the flow routing already cached. Stream types took
+  7.5 minutes, about 6 of them drawing 4,280 section plots and 856 reach
+  sheets.</li>
+<li><strong>Cherokee Bill</strong> (234 million cells at 0.61 m): the landscape pass took
+  12 minutes.</li>
+</ul>
+<p>Always check the printed <code>WARNING:</code> lines. They explain what a number
+means, for example "this DEM is in US survey feet" or "these sections are
+lower bounds".</p>
+<h2>Or run it from ArcGIS Pro (toolbox)</h2>
+<p>The same steps as geoprocessing tools. Install geolens first (above). The
+tools run geolens in the environment the installer built, so nothing is
+installed into ArcGIS Pro's Python and a DEM too big for memory cannot crash
+ArcGIS.</p>
+<ol>
+<li><strong>Add the toolbox once:</strong> in the Catalog pane, right-click <em>Toolboxes ▸
+   Add Toolbox</em> and choose <code>arcgis_toolbox\geolens.pyt</code> in the geolens
+   folder.</li>
+<li><strong>Check it:</strong> run <em>0 Setup ▸ Find the geolens environment</em>. It should
+   report "geolens 0.30.0 found". If it can't find the environment, give it
+   the environment's <code>python.exe</code>, which the installer prints. The tool
+   remembers it.</li>
+<li><strong>Run the whole routine</strong> (<em>1 Whole routine</em>), or <strong>one step at a time</strong>
+   (<em>2 Steps</em>):</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1. Terrain, valley bottom and confinement</td>
+<td>The preprocessing: routing, HAND, valley bottom, reaches. Run it once.</td>
+</tr>
+<tr>
+<td>1b. Calibrate confinement breaks</td>
+<td>Run it with the breaks blank to see this landscape's percentiles and five candidate splits. Run it again with the pair you choose: it re-types the valleys without re-measuring anything.</td>
+</tr>
+<tr>
+<td>2. Valley form, alluvial fans and valley types</td>
+<td>Reads the run folder from step 1.</td>
+</tr>
+<tr>
+<td>3. Stream types</td>
+<td>Reads the run folder. Also re-judges stable/unstable form. Give it a new <em>Output name</em> to keep the old stream types.</td>
+</tr>
+<tr>
+<td>4. Stable or unstable form</td>
+<td>Valley types against stream types.</td>
+</tr>
+<tr>
+<td>5. Gullies (experimental)</td>
+<td>Needs lidar. Checks memory first.</td>
+</tr>
+<tr>
+<td>6. Riparian band from NAIP imagery</td>
+<td>Downloads 1 m NAIP over the run, then maps NDVI above the upland background, near a channel. Needs internet.</td>
+</tr>
+</tbody>
+</table>
+<p><em>3 More tools</em> has:
+   - the alluvial fan search on any DEM (it can re-type a run's valleys with
+     the fans it finds)
+   - clipping a DEM to one watershed
+   - headcuts (knickpoints)
+   - section plots for an earlier run
+   - cross-sections along a centerline</p>
+<p><em>0 Setup</em> has the memory check, and <em>Coarsen a DEM</em> for a DEM that won't
+   fit (below).</p>
+<p><em>0 Get data</em> has:
+   - <strong>Fetch a DEM (USGS 3DEP):</strong> point it at a polygon. It uses 1 m lidar
+     where a project covers the area and the 1/3 arc-second DEM (about 10 m)
+     where none does, and says how much of each. Tiles go to <code>dem_tiles</code> and
+     the mosaic to <code>dem_mosaic.tif</code>, in the folder you choose. The output is
+     in the lidar's UTM zone unless you pick a coordinate system; on a foot
+     coordinate system the elevations are converted to feet as well.
+   - <strong>NAIP imagery and NDVI:</strong> an NDVI tile and an imagery tile for each
+     scene, plus an NDVI mosaic and a true-colour mosaic, all in the folder
+     you choose. Newest imagery goes on top. A folder that already has the
+     tiles is reused. Step 6 does the same into a NAIP folder of your
+     choice before mapping the riparian band.</p>
+<p><strong>Clip to one watershed:</strong> the whole routine and step 1 can clip the DEM
+   to one complete watershed first. Give it a pour point layer (its first
+   point, snapped to the largest drainage nearby), a boundary polygon, or a
+   HUC12 code.</p>
+<p><strong>A DEM too big for memory:</strong>
+   1. Run <em>Coarsen a DEM</em>. With the cell size left at 0 it uses the size the
+      memory check suggests.
+   2. Run the routine on the coarse copy, with the full lidar as the <em>fine
+      DEM</em>. Valleys and routing don't need lidar; the channel sections do,
+      and they read the fine DEM.</p>
+<p>There is deliberately no tool for running the routine in tiles: splitting
+   flow routing across tiles cut 97% of the stream network on the test
+   landscape.
+4. <strong>Always set the output folder.</strong> For steps 2–4, the <em>run folder</em> is the
+   output folder of step 1 or of the whole routine. Redoing a step replaces
+   that step's layers in the run folder; nothing earlier is rerun.
+5. Progress shows in the geoprocessing pane and <em>Cancel</em> stops the run.
+   geolens's warnings appear as tool warnings.</p>
+<p>The layers are added to the map already coloured.</p>
+<p><strong>Plots are geodatabase attachments.</strong> By default each tool copies its layers
+into <code>geolens.gdb</code> in the run folder and attaches every feature's plot. Click
+a section, reach or stability reach with the <em>Explore</em> tool and its plot is in
+the pop-up, with nothing to set up. The attachments go with the layer if you
+share or publish it. The GeoPackages stay alongside for QGIS. Untick <em>Store
+layers in a file geodatabase</em> to get GeoPackage layers with an image pop-up
+instead. The toolbox has been tested against a stand-in for arcpy, not yet
+in ArcGIS Pro itself. If the colours or pop-ups don't appear, the layers are
+still correct: set the pop-up by hand (below) and tell Sam what happened.</p>
+<p>The notebook can do everything the toolbox does, step by step, with the
+numbers printed as it goes. A QGIS plugin with the same tools is in
+<code>qgis_plugin</code> (<em>Plugins ▸ Manage and Install Plugins ▸ Install from ZIP</em>,
+<code>qgis_plugin\geolens_qgis_plugin.zip</code>). From v0.29 new tools go into the
+ArcGIS toolbox first.</p>
+<h2>Look at the results</h2>
+<p><strong>QGIS.</strong> Drag the GeoPackages in.</p>
+<ul>
+<li><code>stream_type_sections.gpkg</code> comes styled: sections are coloured by what
+  happened to their bank pick.</li>
+<li>Blue: the pick was used.</li>
+<li>Orange, amber or purple: the pick was rejected, with the reason in
+    <code>status</code>.</li>
+<li>Grey: the DEM shows no bank.</li>
+<li><strong>Turn on <em>View ▸ Show Map Tips</em> and hover over a section to see its
+  plot.</strong></li>
+<li>Or pick the <em>Run Feature Action</em> tool and click a section to open the plot
+  full size.</li>
+<li><code>stream_types.gpkg</code> works the same way and shows a sheet of each reach's
+  five sections.</li>
+</ul>
+<p><strong>ArcGIS Pro.</strong> Layers the toolbox adds come with this pop-up already. For a layer you
+add yourself, set it up once and save it as a layer file:</p>
+<ol>
+<li>Add <code>stream_type_sections.gpkg</code>. In the Add Data dialog, pick the layer
+   <code>main.stream_type_sections</code>.</li>
+<li>In the Contents pane, right-click the layer ▸ <strong>Configure Pop-ups</strong>.</li>
+<li>At the top of the pane, click <strong>Image</strong>. Edit the new Image element and set
+   <strong>Source URL</strong> to <code>{plot_path}</code>. To open the full-size plot on click, set
+   <strong>Link URL</strong> to <code>{plot_path}</code> as well. A title such as
+   <code>xs {xs_id} - {status}</code> helps.</li>
+<li>Drag the Image element above the Fields element and close the pane.</li>
+<li>Click a section with the <strong>Explore</strong> tool. The pop-up shows its plot;
+   resize the pop-up window to enlarge it.</li>
+<li>Right-click the layer ▸ <strong>Sharing ▸ Save As Layer File</strong> to keep the
+   setup. Do the same for <code>stream_types.gpkg</code> to get the reach sheets.</li>
+</ol>
+<p>The paths in <code>plot_path</code> are full local paths. Esri documents that pop-up
+images can come from local paths, but not UNC or relative paths, so the
+output folder must be on a local drive. The images will not survive
+publishing to ArcGIS Online.</p>
+<p><strong>Browser.</strong> Open <code>stream_types_dir/stream_type_plots.html</code> to see every
+reach sheet on one page. You can filter it by reach id, type or
+<code>no_type_fits</code>.</p>
+<p><strong>Reading a section plot.</strong></p>
+<ul>
+<li>Everything is drawn <em>looking downstream</em>, with compass directions at both
+  ends so it matches the map.</li>
+<li>The left panel is the whole section; the right panel is the channel close
+  up.</li>
+<li>Blue fill: bankfull. Green dashed line: the flood-prone stage (twice the
+  bankfull depth). Purple dashed with hollow circles: where the bank picker
+  would have put bankfull.</li>
+<li>Black bar: the channel width the regional curve expects.</li>
+<li>Faint dotted lines: other levels the picker considered.</li>
+<li><strong>If the purple line sits well above the blue fill, the ground has a
+  deeper channel than the curve expects</strong> (incised, or a terrace): look at
+  the section before trusting the type.</li>
+</ul>
+<p><strong>Earlier output folders.</strong> To add plots to an output folder made before
+v0.26, run <code>api.plot_stream_sections(r"...\stream_types_dir")</code>. It needs no
+DEM and takes about a minute per 500 sections.</p>
+<h2>What is in the output folder</h2>
+<pre><code>terrain_dir/          slope.tif (flow routing is cached in .geolens_cache next to the DEM)
+valley_dir/           valley_bottom.gpkg, valley_core.gpkg, evidence.tif
+network_dir/          segments.gpkg (the reaches)
+classified_dir/       segments_classified.gpkg: confinement ratio and class per reach
+reclassified_dir/     the same, with your calibrated breaks
+valley_form_dir/      valley_form_sections.gpkg: sections divide to divide; valley_form_floors.gpkg
+valley_extent_dir/    valley_extent.gpkg: each reach's valley, floor to ridgetop
+valley_types_dir/     valley_types.gpkg: Rosgen valley type per reach
+fans_dir/             fans.gpkg (accepted fans), fan_candidates.gpkg (every candidate, with the reason)
+stability_dir/        stream_stability.gpkg: valley type, stream type, stable/unstable
+stream_types_dir/     stream_types.gpkg (reaches), stream_type_sections.gpkg,
+                      stream_type_banks.gpkg (bank and flood-prone points),
+                      stream_type_profiles.csv (every section's elevations),
+                      section_plots/, reach_plots/, stream_type_plots.html
+gullies_dir/          gullies.gpkg (lines)
+runs/                 what was run, with which settings, how long it took
+</code></pre>
+<h2>If something goes wrong</h2>
+<ul>
+<li><strong>Out of memory:</strong> read the top of <a href="RUNNING.md">RUNNING.md</a>. In short:
+  trust the step 2 estimate, and let step 3 coarsen the DEM. Stream types
+  still measure channels on the full-resolution DEM if you set <code>DEM_FINE</code>.</li>
+<li><strong>A number looks wrong:</strong> send the <code>runs/</code> folder (small JSON files) and the
+  layer involved. Each run record holds the settings and warnings that
+  explain most surprises.</li>
+</ul>
+<h2>More detail</h2>
+<ul>
+<li><a href="OVERVIEW.md">OVERVIEW.md</a>: what each step does and what to trust, in more
+  depth.</li>
+<li><a href="RUNNING.md">RUNNING.md</a>: every step and parameter, with tuning tables.</li>
+<li><code>docs/geolens_technical_summary_v0.28.pdf</code>: the methods and references,
+  including the bankfull method and the stable/unstable table.</li>
+<li><a href="NEXT.md">NEXT.md</a>: the working log — what changed in each version and what
+  is known to be weak.</li>
+</ul>
+</body></html>

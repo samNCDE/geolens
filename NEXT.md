@@ -1,0 +1,2206 @@
+# Where this left off — pick up here
+
+**Start with [OVERVIEW.md](OVERVIEW.md)** — what the tool does, how to run it,
+and what to trust. This file is the working log behind it.
+
+## Pick up here (state at the end of the 15 Oct 2026 session)
+
+**State.** v0.30.0 beta. The full test suite passes on Linux with numba
+0.61.2. The release zip (`geolens_v0.30.0-beta.zip`) and a git bundle
+(`geolens_v0.30.0.bundle`, one commit, ready to push) are in Sam's Claude
+outputs folder.
+
+**Not yet done:**
+- **Not pushed to GitHub.** This session's GitHub access was not enabled
+  for the repo. To push, create an empty `samNCDE/geolens` repo, then run:
+
+  ```
+  git clone geolens_v0.30.0.bundle geolens
+  cd geolens
+  git remote set-url origin https://github.com/samNCDE/geolens.git
+  git push -u origin main
+  ```
+
+  The bundle is in Claude outputs. Claude Code can do this too, given
+  access to the repo.
+- **Untested in ArcGIS Pro.** The toolbox is tested against a stand-in for
+  arcpy only. Run every tool once on a small area; the 30-minute pass is in
+  `docs/ARCGIS_TEST_CHECKLIST.md`. Watch especially:
+  - the geodatabase attachments and pop-ups;
+  - Fetch a DEM and NAIP (live services);
+  - 1b. Calibrate.
+- Fetchers are untested against the live services (they are tested offline
+  with stubs).
+
+**Next, in order:**
+1. Sam's first real runs in ArcGIS Pro, and fixing what they turn up.
+2. SAR (Sentinel-1 RTC on the Planetary Computer), the way NAIP NDVI is used.
+3. Rosgen's new valley-type names (waiting on Sam's table).
+4. Validation against surveyed bankfull.
+
+**Found this session:** a fresh install pulled numba 0.68, which cannot
+compile pysheds' depression filling. The landscape pass died at its first
+step with "KeyError: int64 generator". numba is now capped below 0.62 in
+pyproject.toml and install.py. Existing environments are unaffected.
+
+**New this session:** *1b. Calibrate confinement breaks*, for the toolbox and
+as `api.calibrate_confinement_for_run`. Later steps use the calibrated
+reaches (`reclassified_dir`) when they exist.
+
+## v0.30.0 (beta): data fetchers, NAIP tiles, plots as attachments; GitHub-ready
+
+**New:**
+- **Fetch a DEM** (`dem_fetch.py`, `api.fetch_dem`):
+  - searches The National Map for 3DEP 1 m tiles and fills gaps from the
+    1/3 arc-second tiles (named by corner, so no search is needed);
+  - streams windows via /vsicurl/, falling back to a whole-tile download;
+  - writes a newest-first mosaic;
+  - on a foot CRS, converts z to feet so geolens reads it right.
+- **NAIP tiles** (`api.naip_tiles`):
+  - per-scene NDVI and RGBN tiles and NDVI and true-colour mosaics, in the
+    folder the user chooses;
+  - skips older scenes where newer ones cover the area, reuses tiles on
+    disk, and pages the STAC search;
+  - has no 400M-cell limit.
+- **Mosaic writer** (`mosaic.py`), shared by both fetchers.
+- **Plots as file geodatabase attachments** (default): the toolbox copies
+  its layers into `run/geolens.gdb`, sets missing plot paths to null, then
+  runs EnableAttachments and AddAttachments. ArcGIS adds an attachments
+  element to the default pop-up for such layers (Esri: "If the layer has
+  attachments, an attachment element is added"). A renamed rerun of a step
+  gets prefixed names, so reruns do not overwrite each other in the gdb.
+
+**Tested:** offline, with the services stubbed. The live services are
+untested here; run the tools once on a small area first.
+
+**Repo:** the README is now a front page, and the old developer README is
+`docs/python_api.md`.
+
+**Next, in order:**
+1. SAR (Sentinel-1 RTC on the Planetary Computer), streamed and used the way
+   NAIP NDVI is. Sam wants to return to this.
+2. Rosgen's new valley-type names (waiting on Sam's table).
+3. Validation against surveyed bankfull.
+4. SSURGO soils fetch.
+5. Confinement calibration as a toolbox tool (notebook-only today).
+
+## v0.29.1: the rest of the toolbox
+
+Sam said yes to adding what was left out.
+
+**New tools:**
+- **6. Riparian band from NAIP imagery.** Uses `riparian_for_run`, which
+  takes the run's DEM for the extent and its HAND and streams for the
+  channel limit.
+- **Clip a DEM to one watershed.** Also an option on the whole routine and
+  on step 1. They clip first, then run the pass on the clipped DEM, so the
+  run record and the later steps work as usual.
+- **Headcuts.**
+- **Coarsen a DEM.**
+
+**Supporting changes:**
+- `watershed(pour_point=)` accepts a point layer, read in its own CRS.
+- The step tools also read watershed-pass records.
+
+**Fixed:** `resample_dem` compared `target_cell_m` with the raster's
+resolution in CRS units. On a US-survey-foot DEM, "10 m" gave 10 ft cells,
+and a 20 m request on the 33.6 ft Ruidoso DEM was refused. Notebook step 3
+used it.
+
+**No tiled tool, on purpose.** `landscape_tiled` documents a 97% network
+loss across tile boundaries. For a DEM too big for memory, coarsen it and
+give the lidar as the fine DEM.
+
+## v0.29.0: ArcGIS Pro toolbox; alluvial fans in the pass
+
+Sam: "i'd rather do [ArcGIS Pro toolboxes] from now on", with the steps as
+separate tools or the whole routine. He also said "we've left some things
+out as well, like the alluvial fan search".
+
+**ArcGIS Pro toolbox** (`arcgis_toolbox/geolens.pyt`):
+- 11 tools: setup, whole routine, steps 1-5, and three more.
+- It uses the QGIS plugin's runner, so each tool is a subprocess in the
+  geolens env.
+- Layers are styled in `postExecute`: categories from the QML sidecars, and
+  image pop-ups through the CIM.
+- New API behind the step tools: `valley_types_for_run`,
+  `stream_types_for_run`, `retype_valleys_with_fans`. The pipeline's
+  valley-types block became `pipeline.valley_types_step`.
+- Tested against a stand-in arcpy only. The first run in Pro is the real
+  test, and the CIM pop-up property names (`sourceURL`, `linkURL`) are the
+  least certain part.
+
+**Fans.** `detect_alluvial_fans` existed and nothing called it, so no reach
+was ever Type III.
+- It now runs inside the pass (`fans=True`), and above 60M cells on an
+  averaged copy.
+- Fixed:
+  - elevations in feet were compared against metres (a 5% fan read 16%);
+  - slope nodata (-9999) went into the smoothing and the slope floor;
+  - the slope floor raised the band above itself on mountain DEMs (0.144 →
+    0.216 on Ruidoso);
+  - apex candidates came from the pass's stream threshold;
+  - the per-cell Python loop in `_mainstem_parent` is now vectorised.
+- New cone test (60 degrees at the apex, and not reaching the radius cap):
+  on Ruidoso 10 m all 26 candidates were trunk-valley strips.
+- Type III now needs half the reach on a fan, at medium confidence.
+
+**Gullies "19 hours".** Sam's gully cell finished in 229 s at 6:20 pm. The
+notebook display had lost the kernel at "measuring gullies 76%". The run
+log in `runs/` proved it. It had also run on the 10 m DEM.
+
+**Not in the toolbox yet:**
+- NAIP/NDVI and the riparian band
+- watershed delineation (`watershed`, `watershed_pass`)
+- headcuts
+- tiled landscape runs
+- inundation checks
+
+## v0.28.2: QGIS plugin
+
+`qgis_plugin/geolens_qgis` (zip: `qgis_plugin/geolens_qgis_plugin.zip`) is a
+Processing provider with five tools:
+
+- check memory
+- landscape pass
+- section plots
+- stable/unstable form
+- cross-sections
+
+How it runs:
+
+- Each tool runs `geolens.api` in the geolens env as a subprocess, with
+  QGIS's PYTHONHOME, PROJ and GDAL variables stripped.
+- `GEOLENS_PROGRESS=json` (in safety.py) streams progress and notes. Callbacks
+  are drained on the Processing thread.
+- Cancel kills the process tree (`taskkill /T`).
+- Layers load with their QML.
+- A warning appears when the output folder is QGIS's temporary folder.
+
+Supporting changes:
+
+- `install.py` writes `~/.geolens/python.txt` so the plugin finds the env
+  wherever conda or the venv put it.
+- `update.py` now also copies `docs/`, `qgis_plugin/` and START_HERE.
+
+Tests: `tests/test_qgis_runner.py` (no QGIS needed) and
+`tests/qgis/check_plugin.py` (headless QGIS 3.x, runs the landscape pass on
+the fixture and checks the styled layers).
+
+Not done:
+
+- no icon
+- not tested on Windows QGIS (OSGeo4W) yet: the first colleague install is
+  the real test
+
+## v0.28.1: valley-form lines
+
+Sam: "the valley form lines seem weird". Every line was the whole 12 km cut
+(2 x max_search_m, capped 6 km per side on Ruidoso): 1,814 identical lines
+over the map. Now the geometry is divide to divide (median 2.06 km on
+Ruidoso), `valley_form_floors.gpkg` added, `station_m` was in feet (fixed).
+Not changed (would move valley types, which Sam says work well; measure
+first): section orientation from a +-1 m tangent on the 0.76 m D8 staircase
+(34% at multiples of 45 deg; median 10 deg off the 50 m channel chord, 11%
+> 30 deg; simplifying the line at 3 cells only brings the median to 7 deg --
+a valley-axis baseline is the real fix), and the divide look-ahead / smoothing
+scale with the search length (10% / 2% of 6 km = 600 m / 120 m).
+
+## START HERE — v0.28.0: bankfull at the regional depth; stable/unstable form
+
+* **Bankfull method (Sam chose option A):** `bankfull_method="regional_stage"`
+  (default) sets bankfull at the regional curve's max depth above the
+  thalweg; the DEM gives W, area, W/D and the flood-prone width at 2x.
+  Width cap: if that depth spills over a flat floor (> 3x regional W) the
+  stage is lowered (>= 0.1 m) until plausible (`stage_capped`); nothing
+  channel-shaped -> `no bank found`. Picker still runs as a check (`picker_*`
+  columns, purple on plots, `picker_bank_top` points); `"hybrid"` and
+  `"picker"` available. Regional-stage reaches cap at medium confidence
+  (`bankfull_source`). Replay on Ruidoso v26 sections (no DEM needed, 12 s):
+  usable sections 1,875 -> 3,336; W/regional 1.71 -> 1.33; W/D median 14.5 ->
+  26.8 (Moody NM curve 21-24); ER median 2.9 -> 1.6; C+E 380 -> 55 reaches,
+  B/D/F up. Not validated against surveyed bankfull. Known weakness: a
+  channel genuinely deeper than the curve (incised arroyo, meadow E) is
+  measured at the curve's stage; E vanished on Ruidoso.
+* **Stable / unstable form** (`landscape/stability.py`, `api.stream_stability`,
+  end of `landscape_pass`): stream letter vs valley type from NRCS NEH 654
+  TS3E Table TS3E-3 (after Rosgen 1996): stable / unstable (VI: G; VIII: D, F,
+  G; X: G, F) / check / unknown, confidence = min of the two. Sam: "that's
+  kind of the whole point". Cherokee v25 (picker types): stable 56, check 45,
+  unknown 2.
+* **Waiting on Sam:** Rosgen's newer descriptive valley-type names (he will
+  send the table). Crosswalk goes in a CSV -> a name column beside
+  `valley_type`, legend, docs. Do not guess the names.
+* **Correction:** Moody et al.'s Eagle Creek (near Alto, NM) is not Sam's Eagle
+  Creek. Removed the false "same basin / reach 39 matches / downstream of the
+  DEM" claims from the PDF (now v0.28), NEXT.md, tests and comments.
+* The Ruidoso mapped line sometimes runs on a bench beside the real low
+  channel (reach 151, xs 758): the thalweg search is only +-1 regional width
+  from the line. Not addressed.
+
+## v0.27.0: shippable to colleagues
+
+* `START_HERE.md` / `.html`: the colleague-facing guide — what it does, install,
+  run, what to trust (with the Ruidoso numbers below), reading the plots.
+* **Gully roughness in strips** (`terrain_roughness`, `block_rows`): was ~48–52
+  B/cell for the whole grid (86–93 GB on Ruidoso's 1.785 G cells — the
+  overnight crash). Now one strip (~3 GB budget, overlap = half the widest
+  window) whatever the DEM; cell-for-cell identical (tests/test_roughness_strips.py,
+  and 0 differing cells against the old code on Eagle Creek at 1.2 m). The
+  rest of the gully step measured 34.9 B/cell and restream 30.1; planner 55 -> 40.
+* Gully polygons opt-in (`polygons=True`): median 31 m wide x 11 m deep footprints
+  on Cherokee Bill; Sam: "not great". Lines stay; their width/depth/volume share
+  the caveat. In mountain terrain most detections are headwater ravines.
+* **Bank picks, Ruidoso v26 (1,875 used) — the weak link, not yet fixed.**
+  Picked max depth vs Moody 2003 NM max depth: median 2.59x (1-5 km2), 2.14x
+  (5-20), 1.72x (>20); only 21-25% within a factor of 1.5. Width ratio 1.46-1.82x.
+  W ~ A^0.197 and D ~ A^0.116 against Moody's 0.281 / 0.237: flatter, i.e. a
+  floor on the picked scale. Within-reach CV: width 0.28, depth 0.47. 889 of
+  1,875 picks had a single candidate. Two failure modes seen in the plots:
+  small drainages -> top of a small incised channel (reach 764); wide sandy
+  washes -> a low-flow thread (reach 151, 35 km2, W 3.9 m, ER 8.8). Sam also
+  finds the bank points on the map "may not be the best". Options to discuss:
+  (a) bankfull at the regional-curve stage with the DEM supplying the shape,
+  picker kept as a check; (b) area-based candidate choice (`select_by_area`,
+  experimental). Neither done.
+* Not done yet: slope tolerance at Rosgen's 4% line (4 Cherokee reaches at
+  4.1-4.2% with C/E measurements are forced to Ba + no_type_fits) — wait until
+  the bank picks are trusted, since ER and W/D come from them.
+* Ruidoso v26 landscape pass: 72 min at full resolution with routing cached;
+  stream types 448 s (plots 346 s); 856 reaches, valley types II 539 / I 140 / V 32.
+
+## v0.26.0: every section has a picture, linked to the map
+
+Sam (23 Sep, on v25): "i've never seen in the outputs a way to reference these
+cross section spatial locations to an image of cross sections".
+
+* `landscape/section_plots.py` renders `section_plots/xs_<xs_id>.png` (whole
+  section + channel close up, looking downstream, compass ends) for every
+  stream-type section and `reach_plots/reach_<id>.png` per reach, plus
+  `stream_type_plots.html`. Default on (`section_plots=`; the test suite turns
+  it off in `tests/conftest.py` via `GEOLENS_SECTION_PLOTS=0`). Reads only the
+  output folder, so `api.plot_stream_sections(folder)` works on v25 folders
+  (stages derived from the profile; `_derive_stages`, checked to 2 cm against
+  the recorded ones). Process pool above 800 sections, byte-identical to serial.
+* Section rows now carry `thalweg_offset_m`, `thalweg_z_m`, `bankfull_stage_m`,
+  `candidate_stages_m`, `floodprone_stage_m`, `regional_max_depth_m`.
+* `gis_style.py`: `plot_file` (relative) + `plot_path` (absolute) columns and
+  a sidecar QML QGIS auto-loads: map tip image, Open-URL action as the
+  canvas default (Run Feature Action tool), image widget, status/letter
+  colours. The link falls back to the layer's folder + `plot_file` when the
+  folder moves. **Verified in real QGIS 3.34** (apt `python3-qgis` under
+  python3.12 in the sandbox) by `tests/qgis/check_plot_links.py`, incl. a
+  moved folder with spaces in the path. Style not embedded in the GeoPackage
+  by default: a `layer_styles` table makes geopandas warn on every read.
+* Reach-scale `export_cross_sections` gets the same links (+ `max_plots`);
+  the notebook's CENTERLINE cell now writes that layer and titles its inline
+  panels `xs <id>`. `sections._load_centerline` on a branched network took the
+  longest input piece, not the longest joined line — fixed.
+* 59 of Cherokee Bill's 103 reaches are digitized upstream (z_start < z_end),
+  so "looking downstream" is decided per reach from z_start/z_end.
+* **Riparian:** polygons were traced 4-connected from 8-connected labels, so
+  a patch joined at a diagonal came out in pieces — 1,523 of 1,838 v25
+  "patches" were fragments (median 11 m²), and single-cell squares took 939 of
+  the 1,027 agriculture flags. Now one (multi)polygon per label.
+
+## v0.25.0: stream types reworked, then reviewed
+
+Sam on v23: valley types good; stream types mostly unclassified; gully
+polygons and the riparian corridor not needed (do not extend either without
+asking). v24 reworked stream types; an adversarial review of v24 found six
+defects, all fixed in v25 (listed below so they are not reintroduced).
+
+**How stream types work now**
+
+* **Bankfull = stage–width curve** (`bankfull_stage_width`). Every stage
+  >= min bank height where dW/dh stays 2x its median since the last candidate
+  for 3 steps is a candidate; the lowest is bankfull. Search within 2x the
+  regional width of the thalweg; stages capped at max(3 m, 1.5 x width).
+  Known-answer profiles (`tests/bankfull_profiles.py`,
+  `tests/test_bankfull_stage_width.py`): floodplain, trench, asymmetric pass at
+  0.25/0.6/1.2 m with noise and with the expected width x0.6-x1.6; pure V
+  returns None; confined passes at 0.25 m and is None at 0.6-1.2 m because its
+  0.33 m bank face is below the sample spacing (the sampled profile has no
+  break).
+* **Four bases per reach** (`stream_basis`): `measured` (>= 2 sections with
+  usable banks; ER and W/D from those), `partial` (one; its ER pooled with the
+  regional ones, no W/D), `regional` (flood-prone width at 2x regional max
+  depth over the regional width), `slope_sinuosity`. Only `measured` can be
+  medium/high. Banks are searched only when the regional width is >= 3
+  samples (sections are sampled at max(cell, 0.5 m)); unused picks: over 3x
+  regional, under 3 samples, one-sided.
+* **Regional curve**: `regional_curve="arid_sw_nm"|"arid_sw_az"` (Moody et al.
+  2003, converted to m/km^2 and checked against their published Eagle
+  Creek (Alto, NM) site values -- not Sam's Eagle Creek),
+  `"bieger_us"`, a dict, or None (segments' generic width + Bieger depth).
+  Max depth = mean / 0.58 (Moody 2003, riffles). Validated at the start of
+  `run_landscape`, not at step 6.
+* **Nearest-type key.** Misfit per type: ER/0.2 + WD/2.0 (Rosgen's continuum
+  tolerances) + 0.5 x log2 slope distance + 0.25 x sinuosity/0.1. One table
+  (`_SLOPE_SUFFIX`) says which slope classes exist per letter and how they
+  are written; letters absent at a slope are excluded (no Ca, Ab, Ga, Gc-,
+  DAc). DA never takes the letter. E +0.1 prior over C. Letter when best
+  beats next by 0.05 (ER known) or 0.25 (not).
+
+**v24 defects fixed in v25 (review 22 Sep)**
+
+1. DA outranked C on every flat, straight reach (no sinuosity range).
+2. Labels not in Rosgen's chart: Ab, Ca/Ea/Fa at exactly 4%, Gc-/Bc-; Cc-
+   never produced. Now one slope-class table drives both.
+3. Area-based stage selection (added after v24 packaging) picked a trench's
+   terrace when the expected area was x1.6 off. Now off in the pipeline,
+   restricted to plausible widths, documented experimental.
+4. One-sided picks (water leaves the window) were used as widths.
+5. `stream_basis` mislabelled mixed reaches; W/D from 2 sections was used
+   under a "regional" label.
+6. The feet/metres parity fixture wrote both passes to one folder, so it
+   compared the metric result with itself -- and no fixture channel was wide
+   enough to reach the new code. Separate folders now, plus
+   `tests/test_stream_type_units.py` feeding known profiles in feet, metres and
+   feet-with-metre-elevations straight to the reach typing.
+   Also: sections wrapped in try (one bad section no longer kills the step),
+   NaN samples dropped, sections-layer schema fixed.
+7. **Found by fixing 6: valley width and confinement were 3.28x too large on
+   every foot grid since v21.** `classify.py` multiplied `length_m` by the
+   metres-per-unit factor a second time (network.py already writes metres),
+   so `length_m` in the classified layer was 0.3048 of the truth and
+   `valley_width_m`, `core_width_m` and `confinement_ratio` 3.28x too big.
+   Eagle Creek v23: every one of 53 reaches "unconfined". Valley types read
+   `confinement` and `valley_width_m`, so they are affected too; stream
+   types are not (they use drainage area, gradient and geometry). Rerun any
+   foot-grid landscape pass made with v21-v24.
+
+**Memory, after Sam's full-Ruidoso run (v24, 23 Sep)**
+
+His run: routing grid `Ruidoso_DEM_1m_2m_2m.tif` is really 2.5 ftUS = 0.762 m,
+42,500 x 42,000 = 1.785 billion cells over 1,036 km^2. Landscape pass 3.2 h
+(routing 2.1 h), 856 reaches, stream types 74 s (98.6% typed), valley types
+699; cross-sections; gullies 81 min; then "OOM overnight" -- cause not yet
+pinned (his saved notebook stops mid-gully; asked him for the dying cell).
+NAIP at 1 m over that extent is 1.04e9 cells and is refused by
+MAX_GRID_CELLS before allocating, so it is not the NAIP mosaic.
+
+* **The planner was 2.6-3x low.** It said "86.8 GB, TIGHT -- should fit" on
+  his 117 GB machine. Measured per-stage peaks (27.1 M-cell Eagle Creek at
+  1.2 m, RSS sampled every 50 ms): routing 98.8 B/cell, valley bottom 111.7,
+  network 15.5, classify 31.3, valley extent 12.0, gullies 48.0, stream
+  types ~0. `plan.py` now uses measured bytes/cell (+~10%).
+* **Memory cut, outputs identical:** valley bottom 111.7 -> 48.2 B/cell
+  (float32 evidence built in place; evidence written and freed before
+  despeckling; 0 of 1.4 M valley cells changed, evidence within 3e-6);
+  routing 98.8 -> 80.8 B/cell (pysheds intermediates released as each next
+  stage exists; products written and dropped; HAND float32 in place; HAND
+  bit-identical). Routing is now the peak: ~161 GB on his grid. Route at
+  2 m (23 GB) and pass the 1 m as DEM_FINE.
+* **Units in the planner and the DEM-info cell:** a 2.5 ftUS grid read
+  "@ 2.5 m, 11,156 km^2" (true 0.762 m, 1,036 km^2). Fixed; `describe_raster`
+  now returns `linear_units` and `metres_per_unit`.
+* Still to do: NAIP mosaic is O(grid) in memory (32 B/cell of accumulators
+  plus a 16 B/cell full-grid array per scene) -- make it windowed so a
+  1 m NAIP over a whole Ruidoso-size extent is possible; riparian_band is
+  O(grid) too.
+
+**Results**
+
+* Sam's v23 run on Eagle Creek (0.61 m, EPSG:6529), replayed on its own
+  saved sections: v23 left 33 of 53 reaches with no letter (49 of 61 bank
+  picks thrown out); v25 with `arid_sw_nm` types all 53 -- Aa+ 21, Ba 15,
+  Cb 9, C 3, A 3, B 1, E 1; basis measured 20, partial 3, regional 30.
+* **CORRECTED (v0.28, Sam):** Moody et al.'s Eagle Creek (near Alto, NM) is
+  a *completely different place* from Sam's Eagle Creek DEM. Earlier notes
+  here and in the v0.25 PDF said its field sites were in or downstream of
+  Sam's DEM and "matched reach 39" -- false. Their two field-typed sites
+  (below South Fork: B4, ER 1.9, W/D 21.5, 2.2%; Trib #1: A4a+, ER 2.6,
+  12.7%) only check that the key reproduces published field types
+  (`test_moodys_eagle_creek_sites_key_to_their_field_types`). They are not a
+  validation of geolens measurements on any of Sam's areas.
+
+**Next, in order**
+
+1. **Sam's full Ruidoso run** (DEM = 2 m for routing, DEM_FINE = the 1 m,
+   `arid_sw_nm`). Look at `stream_basis` counts, `stream_type_banks.gpkg` on
+   the hillshade, and runtime of the channel measurement at that scale.
+2. **Roads.** Eagle Creek r10/r12/r13/r37 show a flat bench beside the
+   channel on every section -- almost certainly a road. It reads as
+   floodplain (regional ER 15-24). Pass the gully `exclude=` roads layer to
+   stream types and mask section samples on it.
+3. **Field bankfull vs DEM bankfull.** Main-stem picks run ~2x the NM
+   curve's width: the DEM's first visible break is the top of the incised
+   bank, and Moody et al. say SW bankfull is rarely that. Area-based
+   selection among candidates (`expected_area=`) changed nothing on Eagle
+   Creek -- the lowest candidate was already nearest. Needs Sam's field
+   widths to go further.
+4. **Flat-floored sections** (Eagle Creek 1.2 m r32 xs163): the floor fills
+   in the first few cm and the pick lands on a wall bench. A
+   width-at-min-bank-height > 3x regional test would return None instead.
+
+## v0.23.0 — roads layer for gullies
+
+* `detect_gullies(..., exclude="roads.gpkg", exclude_buffer_m=10)` and
+  `geolens gullies --exclude`. Lines lying mostly along the layer are set
+  aside into `gullies_excluded.gpkg` for review, not deleted.
+
+## v0.22.0 — gully footprints from the ground, and the whole network
+
+* **Gully footprints are measured, not joined.** Depth below the lower rim on
+  a cross-profile every two cells, cells burned where the incision exceeds 5%
+  of the local depth. Known fixture: 14.00 m wide (built 14), 1.95 m mean
+  depth (2.00), 27.3 m³/m (28.0). Eagle Creek: 110/117 footprints (was 55),
+  96% of each centreline inside (was 56%). `footprint_quality` flags the
+  doubtful ones. `tests/test_gully_footprint.py`.
+* **Roads are still detected as gullies.** Eagle Creek gully 84 is a road cut.
+  The footprint flags it doubtful (0.23 m deep) but detection admits it.
+  **Tried and failed: bed flatness.** A road bed is flat and a gully is a V,
+  so the fraction of each profile near its deepest point should separate
+  them — but the detector's line follows the road's inside *ditch*, not the
+  bed, and a ditch is a small V: 84 scores 0.33, 17th of 110, inside the
+  gully range. Width variability doesn't separate it either. Not shipped as a
+  flag. Next candidates, untested: constant along-line gradient (engineered
+  grade), smooth long-radius curvature, a parallel uphill cut-slope and
+  downhill fill-slope, or simply an OSM / TIGER roads layer as a mask — the
+  last is the honest one and probably the answer.
+* **The stream threshold defaults to the DEM's size** (`None` → extent/500,
+  capped at 1 km², floored at 0.01). Eagle Creek had 13 segments on 2
+  branches at the old fixed 1 km² — only the main stems, so no tributary was
+  ever classified.
+
+## v0.21.0 — state at the end of the 22 Sep 2026 session
+
+### Pick up here, in this order
+
+1. **Bankfull detection in confined channels.** This is now THE limit on
+   Rosgen stream types. On Eagle Creek (0.61 m, EPSG:6529) median measured
+   bankfull was 3.7x the width the drainage area supports, up to 8.3x — the
+   slope-break walker finds no floodplain break in a confined channel and
+   climbs to a bench or the valley wall. v21 excludes sections over 3x and
+   says so, which is honest but leaves 8 of 11 measured reaches on candidate
+   sets. Candidates for a real fix, none tried yet:
+   * bankfull stage from the width-vs-stage curve: the stage where
+     width/depth is minimised, or where d(width)/d(stage) jumps (Williams
+     1978; compared in Navratil et al. 2006). Needs no floodplain.
+   * constrain the bank search to ~2-3x the regional width, so it cannot
+     reach the valley wall;
+   * a LOCAL regional curve (Moody et al. 2003 for NM/AZ) instead of the
+     generic one, which would also tighten the 3x plausibility bound.
+   Validate against Sam's field bankfull, not the fixture.
+2. **Prove NAIP on Sam's machine.** Planetary Computer is blocked from the
+   sandbox. v21 fixed the reason Eagle Creek never reached the network (a
+   "1 m" grid built at 1 ft) and added a Python-HTTPS download fallback for
+   the GDAL-certificate case, but neither has seen the live service. Look at
+   `naip_dir/naip_sources.json` after one run.
+3. **Geology works — confirm the substrate.** "auto" downloaded and was used
+   by valley types on Eagle Creek (`geology_used: true`); stream types failed
+   to use it (path passed where a layer was wanted). Fixed in v21 and tested
+   offline; confirm `stream_type_full` is populated on a real run.
+4. **Unit parity for the reach-scale path.** `tests/test_units_parity.py`
+   covers the landscape pass, gullies and riparian on a feet/metres pair of
+   the same ground; it found nine unit bugs on its first run. The reach-scale
+   API (`delineate_channel`) takes CRS units by documented design and is not
+   yet covered — worth a parity test that converts its inputs.
+5. **The notebook test now spends minutes on network retries** against hosts
+   the sandbox blocks (geology "auto", NAIP). The suite went from ~8 to ~10
+   minutes. Make those cells skip fast when offline.
+
+### What v19-v21 changed (short)
+
+* Valley extent is each reach's local catchment — boundaries on the divides,
+  tiling with no overlap. The stitched-ribbon construction is deleted.
+* Rosgen stream types A-G. Entrenchment and W/D pick the letter; slope and
+  sinuosity rank; slope outside the typical range is a suffix (Bc, Fb, Aa+).
+* `dem_fine=` — route coarse, measure the channel fine.
+* `geology="auto"`, with its status in the result.
+* Conda is the default install route and the environment is permanent;
+  `--venv` stays for testing a release.
+* Unit bugs fixed on foot grids: network segment length, length_m, drop_m,
+  HAND thresholds, slope-distance decay, gully sections/lengths/areas, fan
+  detection, the geology buffer, riparian window/patch/areas/HAND, and the
+  NAIP grid. All caught by the feet/metres parity fixture
+  (`tests/make_terrain.py`), none by the metric fixtures before it.
+* Crash fixes: the gully skeleton walked closed rings forever (the overnight
+  crash); fragment merging was O(n^2).
+* Cache: content-hashed rather than keyed on mtime, and a `reuse_routing=False`
+  run no longer overwrites the shared cache.
+
+## v0.13.0 — the cache and the environment, actually fixed this time
+
+Sam, looking at v17: *"it doesn't look like you fixed the permanent conda env
+or the cached outputs from previous runs."* Both were built and both were
+useless in practice, for the same underlying reason: I fixed the mechanism and
+not the thing that actually happens.
+
+### The cache was keyed to the output folder
+
+It lived under ``GEOLENS_OUT``. So it survived closing the notebook — the case
+I set out to fix — and was thrown away by every other ordinary thing: a new
+results folder, a session with a different ``OUT_DIR``, unzipping the next
+release beside the last. The point is to pay for conditioning **once per DEM**,
+and keying it to the output directory meant paying once per run
+*configuration*.
+
+Measured on the landscape fixture: 4.89 s cold, 0.07 s warm in the same
+``OUT_DIR``, and **1.90 s again from a different one**.
+
+The cache now lives beside the DEM, in a `.geolens_cache` folder next to the
+data it belongs to, because the DEM is what it is about. Same test: 5.49 s
+cold, then 0.07 s from each of two unrelated output directories. ``GEOLENS_CACHE``
+overrides the location, and it falls back to a per-user cache folder when the
+DEM sits on a read-only or network mount — which research data very often
+does, and where the alternative is silently never caching at all.
+
+### The installer destroyed the environment it was meant to preserve
+
+`update.py` was the right tool and nobody was going to use it, because the
+habit is to run the installer and the installer's short version still said to.
+Worse, the installer's job on the second release is not the same as on the
+first, and it did not know the difference:
+
+* **`--conda` deleted the existing environment and rebuilt it from scratch** —
+  hundreds of megabytes redownloaded to deliver a few hundred kilobytes of new
+  Python. That was deliberate, and right, for an *install*: conda-forge
+  packages into an env holding another channel's is what produces unsolvable
+  conflicts. It is completely wrong for an update.
+* The venv route built another environment beside the last one, which is how
+  someone ends up with four and no idea which Jupyter is using.
+
+`install.py` now looks for a working geolens install before it builds
+anything — the named conda env, this interpreter, and any `.venv` in a sibling
+`geolens*` folder, which is where the previous release's venv lives. When it
+finds one it updates the code in place and leaves the environment untouched.
+`--force-rebuild` gets the old behaviour.
+
+The lesson is the same both times: a fix that requires someone to change what
+they do is not a fix. The cache had to follow the data rather than the run, and
+the update had to be what the installer does rather than a second script beside
+it.
+
+**Tests: 384.** New: `test_installer_update.py` (4) and two in
+`test_routing_cache.py` — one that the cache survives a different output
+directory, one that ``GEOLENS_CACHE`` is honoured.
+
+## v0.12.1 — valley types were correct and unreachable
+
+Having fixed the valley-type measurement, I checked whether it reaches the
+workflow. It did not.
+
+**The notebook never mentioned valley types at all** — not `valley_form`, not
+`rosgen_valley_types`, nothing. Three rounds of work on Rosgen valley types,
+and the entry point that produces the outputs anyone actually looks at did not
+run any of it. That is why the report kept being "we still haven't figured out
+valley types" while the code got steadily better: the outputs did not contain
+them. `landscape_pass` does not run them either, so the only way to get a
+valley type was to know the two api calls and chain them by hand.
+
+There is now a step 7, between the class-break calibration and the plots. On a
+DEM with real valleys it produces a real distribution — VIII 78, V 57, II 39,
+I 14, 22 unresolved out of 210 segments — rather than one type for everything.
+
+### The parameter that decides whether it works at all
+
+`max_search_m` is how far to look for the divide. Too small and every section
+returns a lower bound instead of a measurement, and **the run looks perfectly
+healthy while measuring nothing** — which is what the fixed 3 km default did.
+
+It is now derived from the DEM when not given, and the derivation had to be
+corrected once: a sixth of the grid's shorter side gave 2,333 m on a fixture
+whose divides sit up to 3,400 m out, and 20% of sections measured. The right
+instinct is **generous**, because `_find_divide` takes the first crest walking
+out from the floor — a wider search can never find a wronger divide, only let
+more sections find one, and the cost is samples rather than correctness. At a
+third of the shorter side, capped at 6 km: 140 of 140 sections, in 4.4 s.
+
+The notebook also prints `n_measured` against `n_sections` and says plainly
+when most sections never reached a divide, because that is the failure that
+otherwise hides.
+
+**Tests: 375 (up 2).** Both in `test_valley_types.py`: one that the derived
+search distance actually reaches the fixture's known divides, and one that the
+notebook runs valley types at all — which is the thing that was wrong.
+
+## v0.12.0 — Rosgen valley types, actually measured to the ridgetop
+
+Sam: *"we still haven't figured out rosgen valley types at the actual valley
+level, not the valley floor and not the channel level but i want valley bottom
+to ridgetop."* Third time of asking. This time I measured instead of adjusting,
+and found three defects stacked on top of each other, each hiding the next.
+
+### 1. There was no fixture with a ridge in it
+
+`make_landscape.py` builds valley side slopes that rise at a constant gradient
+and **never stop**. It has truth for valley-bottom width, which is what it was
+built for, and it was the only landscape fixture there was.
+
+So every test of valley form ran on terrain with no ridgetop in it. On a real
+run: **5 of 750 sections (1%)** found both divides; 234 of 240 segments came
+back `lower_bound`. The crest detector found nothing because there was nothing
+to find, and for two releases that read as a tuning problem.
+
+`make_valleys.py` builds five parallel valleys separated by real divides, each
+with a different known form — a V-notch, a broad U, a gorge, a wide alluvial
+valley, and a 70%-walled canyon. Ridge positions are measured off the surface
+that was built rather than assumed to sit midway.
+
+On it, **the same code finds both divides on 100% of sections and measures
+valley top width to within 0.7% of truth**. The algorithm was never the
+problem. Two rounds of work went into tuning something that was already right.
+
+### 2. The shape exponent was fitted wrong
+
+`rise + tol` was fitted rather than `rise`, to keep the logarithm finite near
+the floor. That additive term is not part of a power law: it flattens the
+bottom of the curve and the fit answers with a steeper slope.
+
+| | true 1.0 | 1.5 | 2.0 | 2.5 |
+|---|---|---|---|---|
+| before, clean flank | 1.04 | — | **2.60** | — |
+| before, with the valley floor included | — | — | **2.96** | — |
+| before, built n=1.6 wide valley | — | — | — | **3.96** |
+| after | 1.01 | 1.50 | 1.99 | 2.52 |
+
+A built U came back as 4.74 in the pipeline — not U, not V, not anything. Both
+wide valleys were classified on that number. Fixed by fitting `log(rise)`
+directly, dropping points at or below the floor tolerance, and dropping the toe
+(within 5% of the wall's height the rise is a metre or two and in log space it
+is mostly noise: with 1.5 m of noise a true 2.0 still fitted 2.89 without it).
+
+### 3. The "valley floor" was the channel
+
+This is the one Sam kept naming. The floor elevation was taken **at the
+thalweg**, so a 2 m tolerance band sat inside a 3 m incised channel:
+
+| built floor | 80 m | 180 m | 900 m | 1800 m |
+|---|---|---|---|---|
+| measured | 20 m | 0 m | 0 m | **40 m** |
+| after | 140 m | 220 m | 1180 m | **1900 m** |
+
+An 1800 m alluvial floor read as 40 m. Vf was ~0.15 for every valley, so all
+four classified as V-shaped whatever their form. That is exactly "measuring the
+channel, not the valley".
+
+The channel is distinguishable by being narrow, so the floor elevation is now
+estimated from an annulus around the thalweg — outside this channel, but near
+enough not to reach the next valley's. Both halves of that were learned the
+hard way: taking the minimum over the whole section reached into the
+**neighbouring** valley's channel, which is lower, and collapsed the tolerance
+band the same way by a different route.
+
+And stepping over the channel has to be conditional, because **a V-notch does
+not have one**. Stepping out unconditionally landed 25 m up the flank of a
+perfect V and measured a one-cell floor as 114 m — the same mistake mirrored.
+A channel is a *step* (climb, then flatten); a V keeps climbing. Comparing the
+rise across the channel window with the rise across the next window of equal
+width separates them without assuming either.
+
+The remaining bias is high by 9-75%, and it is real rather than tunable: a
+valley flank is genuinely flat near its toe, most of all a parabolic one, so
+any tolerance band includes some of it. Vf on a narrow floor is an upper bound.
+
+### The classification
+
+With the measurements right, two rules were wrong:
+
+* `u_shaped` triggered at **n >= 1.6**, which is not a trough — it is a shape
+  between the two. The built 1.6 wide alluvial valley tripped it and came back
+  a glacial trough. Now 1.8, with 1.3-1.8 left as what it is, neither.
+* The glacial-trough rule looked at shape alone. **Vf is the floor width over
+  the valley's own depth; "very_broad" means a floor more than four times the
+  depth.** Yosemite is about 1.7. A valley at 7.8 is an alluvial plain whatever
+  its flanks fit to.
+
+The five valleys now classify across the key: **I** for the canyon, **V** for
+the trough, **II** for the V-notches, and the wide alluvial valley **declines**
+with VIII/IX/X offered — geometry alone cannot separate alluvial from outwash
+from lacustrine, and saying so is the correct answer, not a gap.
+
+`valley_form` was also never exported from `geolens.landscape`; it had to be
+imported from the module directly.
+
+### QGIS groundwork, deprioritised mid-session
+
+`qgis_bridge.py` detects how geolens can run from inside QGIS — in-process when
+QGIS's Python can import it, subprocess against a separate environment when it
+cannot, and an explicit "unavailable" naming the missing imports when neither
+works. It is free of PyQGIS so it can be tested without QGIS, which is the
+whole point, since QGIS cannot be installed here. The architecture question I
+raised — install into QGIS's Python or drive an external environment — is
+answered by not answering it: the plugin detects.
+
+**Tests: 373 (up 26).** New: `test_valley_types.py` (15),
+`test_qgis_bridge.py` (11), and `make_valleys.py` — the fixture that should
+have existed before any of this was written.
+
+## v0.11.0 — the watershed is the unit; condition once, not once per run
+
+Sam, mid-session: *"tiling doesn't make sense for watershed work."* Correct,
+and a bigger correction than it sounds — I had spent the previous hour
+verifying the tiling path.
+
+### What was actually wrong
+
+`plan_landscape_run` is the first thing the notebook tells you to run, and when
+a DEM will not fit it told you to split by watershed — pointing at
+`derive_basins()`/`split_by_basins()`, which draw divides from a **coarsened**
+copy of the DEM. Approximate boundaries, and never once exercised by a test.
+
+Meanwhile `catchment()` has been sitting in `flow.py` the whole time, with a
+docstring that says exactly the right thing: *"a complete watershed has no
+inflow across its boundary by definition, so accumulation computed inside the
+clip is exactly right."* It was reachable from neither the api nor the CLI.
+The correct primitive existed and the documentation routed people past it.
+
+### `watershed()` — three ways to name the unit, one way to check it
+
+* `boundary=` — a polygon you already have (WBD HUC12, permit area).
+* `pour_point=` — a coordinate; the contributing area is delineated from the
+  DEM. Accepts lon/lat via `pour_crs=`.
+* `huc=` — fetched from the USGS WBD. Network call, with its own selftest;
+  **unverified here** because the ArcGIS services are blocked in this sandbox.
+
+A supplied boundary is **checked, not trusted**. `check_inflow` asks which
+cells outside the polygon drain into it — the reverse of how `catchment` works,
+so the two are genuinely independent. Feeding a delineated watershed back in
+returns zero inflow cells, which is the only non-self-referential check here.
+
+**The number that makes the case:** a rectangle over the middle third of the
+landscape fixture has 720 cells draining into it, carrying **3.65x the
+rectangle's own area** in upstream contribution. Analyse that tile alone and
+every contributing-area-derived quantity in it is missing most of its input.
+That is now `test_a_rectangle_is_not_a_watershed`.
+
+Pour points are snapped to the largest drainage within `snap_radius_m`, and the
+distance moved is reported. One cell off the channel gives a watershed of a few
+hundred square metres, which reads as a broken delineation rather than a
+misplaced point.
+
+`plan` now recommends picking a watershed rather than splitting a landscape,
+`grid_tiles` carries a comment naming what it is and is not safe for, and
+`derive_basins` says in its own docstring that its divides are approximate.
+
+### Conditioning is cached
+
+Also Sam: *"if we're doing multiple runs we should use the hydroconditioned dem
+from the last run."* Right, and it was worse than one run to the next —
+reusing a `TerrainResult` in memory already avoided it within a session, but
+closing the notebook threw it all away. Open it the next morning and the first
+cell re-fills every depression it filled yesterday.
+
+Filling, flat resolution and D8 routing are deterministic for a given DEM and
+backend, so they are now cached on disk and shared across runs. The backend
+writes straight into the cache directory, so nothing is copied — a 7.7 GB
+conditioned raster is not something to duplicate per run.
+
+| | landscape fixture |
+|---|---|
+| cold | 2.01 s |
+| warm, same threshold | 0.09 s |
+| warm, different threshold | 0.24 s |
+
+Bit-for-bit identical in all three cases, which is the only thing that makes a
+cache acceptable. The key is the DEM's resolved path, size and mtime plus the
+backend and a `_ROUTING_VERSION`, so an edited DEM, a different backend or a
+change to the routing code all miss cleanly. A manifest whose rasters have gone
+is ignored rather than trusted.
+
+### `update.py` — install once, update in place
+
+And: *"make a permanent environment rather than reinstalling venv every
+update."* The environment is the slow, fragile part — the GDAL/rasterio/numba
+solve. New code needs none of it rebuilt, but unzipping each release to its own
+`geolens_15` folder puts every release at a new path, so the editable pointer
+has to move, and the easiest way to move it looks like running the installer.
+
+`update.py` finds whichever install this Python imports `geolens` from —
+following the pointer rather than asking where you think it is — copies the
+code in, and touches nothing else. It replaces rather than merges, so a module
+deleted in a release actually disappears; keeps a backup of what it replaced;
+reads the version from the file rather than importing (the import is the copy
+being replaced, so it would report the same number twice); and names any
+dependency the release needs that the environment lacks **without installing
+it**.
+
+That dependency check reads the optional extras as well as the core list —
+scikit-image, scipy, numba and pysheds are what gully detection and flow
+routing actually import. Writing it turned up that a comment containing
+"someone else's dependency tree" was contributing a package called `s`.
+
+### Known gaps
+
+* The WBD fetch is written and unverified — the service is blocked here. It has
+  a selftest and the offline path (`boundary=`) needs no network at all.
+* The MCP server still exposes only reach-scale tools (carried over from v0.10).
+
+**Tests: 345 (up 15).** New: `test_watershed.py`, `test_routing_cache.py`,
+`test_update.py`.
+
+## v0.10.0 — the platform it actually runs on, and the surface nothing had run
+
+Every test in this suite runs on Linux, with a UTF-8 stream, in a process that
+exits cleanly. It is run on Windows, from Jupyter, in a folder under Documents.
+This session went looking in that gap.
+
+### The progress bar could end the run
+
+A Windows console is UTF-8 in modern Python. Redirect the output —
+`geolens landscape dem.tif > run.log`, which is what anyone does for a job that
+takes hours — and the stream falls back to the locale encoding, cp1252 on a
+Western install.
+
+cp1252 has the em dash and the superscript two this package uses freely. It
+does **not** have U+2588 and U+2591, the block characters the progress bar is
+drawn with. Writing one raises `UnicodeEncodeError`, and that ends the run: a
+progress bar, whose entire job is to be reassuring, killing an overnight job at
+its first redraw. Both bars (tqdm's and the fallback) now check the stream once
+and use ASCII when they have to, `note` degrades instead of raising, and a
+standing test scans every string literal in the package for characters a
+redirected Windows console cannot encode.
+
+### 10,739 GeoPackages, left in the output folder
+
+`_xsect` takes a path, so each gully's centreline has to exist on disk for one
+call. They were written to a directory that was never cleaned. The Ruidoso run
+found 10,739 gullies, so it left 10,739 GeoPackages behind — in the output
+folder, which on Windows is typically under Documents and therefore
+cloud-synced. They are now deleted as they go: peak file count is 1, tested
+from inside the loop rather than by checking the end state.
+
+### Two raster handles that a failure would leak
+
+They were closed by two `close()` calls at the end of the function, so any
+exception skipped them. In Jupyter that is worse than a leak: `sys.last_traceback`
+keeps the failed frame alive, which keeps the datasets open, and on Windows an
+open handle blocks rewriting the file. One failed gully run locked `slope_std`
+and `accumulation`, and the obvious next move — re-run the step that writes
+them — was exactly what could not work until the kernel was restarted.
+`try/finally` now, with a test that induces a failure mid-pass and asserts
+every dataset opened during it is closed.
+
+### Gullies were the one step with no record
+
+`geolens.api` wraps every public function so results land in `runs/` without
+the caller doing anything — and the notebook called
+`geolens.landscape.detect_gullies` directly. The step whose parameters most
+need a record of what was tried had none.
+
+`api.detect_gullies` now exists and the notebook uses it. It reuses a
+`landscape_pass` result rather than re-routing, scales the roughness window,
+section width and minimum length to the cell size (logic the notebook used to
+carry inline), and picks `slope_std_min` from the distribution when left
+`None`, returning the evidence under `threshold_choice`.
+
+`GullyResult.parameters` was also recording only the detection thresholds. The
+measurement half — section width and spacing, the bank-detection limits —
+decides width, depth, volume and whether a gully gets a polygon at all, and
+none of it was saved. A run log that cannot answer "what section width produced
+these widths" is not a run log.
+
+**And a fresh instance of the ftUS bug, in code written the same week I fixed
+that class of bug.** Given a DEM path and no stream threshold, the new wrapper
+picks one from the DEM's extent — computed as `width * height * res[0] * res[1]`,
+which on a CRS in US survey feet is square feet. On Sam's grid a tile that is
+really 0.134 km2 reads as 1.440, out by 10.76x. It goes through `units.unit_info`
+now, with a test on an EPSG:6529 fixture.
+
+### 28 CLI subcommands, five of them ever run
+
+The CLI is a documented entry point. Five subcommands were exercised anywhere
+in the suite; the rest were an argparse definition and a handler branch nothing
+had ever taken, including `valleyform`, `valleytypes`, `breaks`, `reclassify`,
+`fans` and `headcuts` — all listed in RUNNING.md as things to run.
+
+All 19 reachable ones now run against real fixtures in
+`tests/test_cli_surface.py`, and every one passes. The commands needing the
+network or the WhiteboxTools binary are named in `_UNREACHABLE` in that file
+rather than quietly left out, so the gap stays visible.
+
+Two things the sweep found:
+
+* **`geolens gullies` did not exist**, while headcuts, fans and riparian all
+  had a subcommand. It does now.
+* **`geolens plan dem.tif` was in OVERVIEW.md and was not a command.**
+  `api.plan_landscape_run` existed, the notebook's step 2 is built on it, and
+  the docs told people to run it from a shell where it exited 2 with an
+  argparse error. A documented command that does not exist is worse than an
+  undocumented one. It exists now, and a test compares the commands shown in
+  the docs against the parser so this cannot recur.
+
+**Tests: 321 (up 24).** New files: `test_windows_console.py`, `test_cleanup.py`,
+`test_cli_surface.py`, `test_gully_api.py`.
+
+### Known gap, not fixed
+
+The MCP server registers 13 tools and all of them work — but they are all
+reach-scale: sections, profile, delineation, plotting, workspace. **None of the
+landscape work is exposed**: no landscape pass, no HAND, no gullies, no valley
+types, no fans, no headcuts. An assistant driving geolens through MCP cannot
+reach anything built since v0.4. The api functions all exist, so this is schema
+and testing rather than new computation — but it is new surface, and adding it
+at the end of a session is how the last few rounds of self-inflicted defects
+started. Left for a session that can start with it.
+
+## v0.9.0 — HAND: three defects, one of them on every clipped DEM
+
+"The hand output doesn't look like it worked." On the real run HAND came back
+with a maximum of 20,628 on a DEM whose whole relief is 5,908, and 17,741,388
+cells sat above that relief. `_sanitise_hand` caught and masked them — and I
+left it there, which was the mistake. Catching a wrong number downstream is not
+the same as not producing one, and a backstop only fires when the error happens
+to be large.
+
+### 1. Stream cells were landing on nodata
+
+A nodata cell still collects flow from its valid neighbours. On a clipped
+watershed — which is what most real DEMs are — the collar around the data is
+exactly where all that flow ends up, so those cells sail past any stream
+threshold and get marked as streams. Their elevation is the nodata value, and
+every cell draining to them reports `elevation + 9999`.
+
+Reproduced on a synthetic clipped basin: **794 of 1,053 stream cells, 75%, were
+on nodata**, and 26,547 cells came back above the DEM's 96.2 m relief, the
+worst 11,997. `_streams_from_acc` now restricts the network to valid ground at
+all three in-memory derivation sites and says how many it dropped.
+
+**Cost: none.** HAND coverage is identical before and after — 85.1% on a real
+catchment, 16.5% on one that mostly drains off the edge — because those cells
+never had usable HAND, they had a fabricated one the backstop then threw away.
+`test_the_fix_does_not_cost_coverage` holds that, so a future over-eager mask
+cannot quietly delete real drainage.
+
+### 2. pysheds was leaving a quarter of the grid unresolved
+
+Chasing the first defect turned up a second that had nothing to do with it.
+`grid.compute_hand` and geolens' own `_hand_from_flow` agree to **1e-4 m**
+wherever both return a value — and disagree sharply about how many cells get
+one:
+
+| fixture | pysheds | geolens tracer |
+|---|---|---|
+| landscape_dem | 99.5% | 100.0% |
+| compound_dem | 89.8% | 95.3% |
+| convergent basin | 76.0% | 100.0% |
+
+I did not take the tracer's word for it. 400 cells pysheds left unresolved were
+walked by hand along the same flow-direction raster: **every one reached a
+stream cell.** The tracer is right. `build_terrain` now uses it, which also
+ends a silent split — `restream` has always used the tracer, so the same
+routing gave different HAND depending on which entry point you came through.
+
+`tests/test_reuse.py` should have caught that and could not: it compared HAND
+only where *both* rasters had data, so it was structurally blind to the two
+producing different amounts of it. It now compares coverage too.
+
+### 3. A 15.5 GB allocation, every call
+
+`_hand_from_flow` allocated its walk buffer at `H*W` int64. On the 1.94-billion
+cell DEM that is **15.5 GB on top of the 7.7 GB output — 23 GB before any other
+array**, requested up front. It only ever holds the walk in progress. Capped at
+1M entries (8 MB), which loses nothing: every cell is the first entry of its own
+walk, so it is always inside the cap; a cell beyond it is resolved later when
+the scan reaches it. Tested by running at a cap of 1, 3, 17 and 1000 against no
+cap and requiring bit-identical output.
+
+Capping it also nearly removed the guard against a cycle in the flow-direction
+raster, which rode on the same counter and would have hung the walk forever.
+`steps` and `n` are now separate.
+
+### 4. A sentinel that collided with real elevations
+
+`found >= 0.0` doubled as "nothing found yet" for a variable holding an
+elevation, which silently means "only trust a base above sea level". On ground
+below it the resolved-neighbour branch handed back a good negative base, the
+test rejected it, and the whole upstream path was dropped to NaN with nothing
+reported — 39,473 of 40,000 cells, a silent 1.3% loss. The arid Southwest has
+plenty of ground below sea level (Salton Sea −69 m, Death Valley −86 m).
+
+### The out-of-core backend had none of this
+
+WhiteboxTools writes its rasters to disk and never touched `_sanitise_hand`, so
+the invariant that caught the original bug did not apply to it at all. It now
+gets a windowed stream mask (before `elevation_above_stream`, because
+afterwards there is nothing left to repair) and a windowed invariant check.
+
+Its binary cannot be downloaded here, so the two helpers are written as plain
+functions over rasters and tested directly, and the wiring is covered by
+stubbing `whitebox.WhiteboxTools` with a fake that writes the rasters it would
+write. `_run_whitebox` previously had **no coverage of any kind**.
+
+**Tests: 285 (up 14), all in `tests/test_hand_streams.py`.**
+
+### What this means for the Ruidoso run
+
+Re-run it. The 17.7M impossible cells should be gone, the warnings should name
+the collar instead of the symptom, and HAND coverage should go up rather than
+down. If the collar warning reports a large fraction, the DEM is not a single
+connected catchment with its outlet inside the grid — which is worth knowing
+before anything keyed off HAND is trusted.
+
+## v0.8.0 — the gully detector had no size criterion
+
+Sam's report was "gully has flagged almost every stream". It had. The diagnosis
+was in the numbers from his own run: 10,739 features, 3,195 km against a
+1,767 km stream network — 1.8x the whole drainage network — median contributing
+area 0.21 km2 with 27.8% above 1 km2 and a maximum of 53.6 km2. Only 2.7% of
+what came back was gully-scale.
+
+**None of it was a computation error, which is why it took a while to see.**
+Every number was right. The detector has four tests — slope variability, TPI,
+slope, drainage area — and *three of them are just as true of a river as of a
+gully*. `max_drainage_km2` is the only one that means **small**, and it shipped
+defaulting to `None` with a docstring arguing for leaving it there. With no
+upper bound, a detector for incised things returns the incised network. That is
+a design hole, not a tuning problem, and no parameter advice fixes it.
+
+It now defaults to 0.5 km2. The cost is real and documented: a gully that
+collects more than the ceiling is truncated where it does, so its downstream
+end is missing. That is a measurement error; returning 53 km2 creeks is a
+category error, and the category error is worse. Passing `None` still works and
+now warns.
+
+### And then I got the correction wrong, twice
+
+**First wrong correction.** The notebook said "gullies usually sit above p90;
+start `slope_std_min` there" and then did exactly that. p90 admits 10% of a DEM
+*by construction* — 190 million cells on Sam's — so I changed it to p99 and
+wrote a warning that fired above a 2% pass rate. Then I ran it: **zero gullies
+on both fixtures.** p97 and above return nothing, because the top of the
+`slope_std` distribution is steep valley walls and mountain flanks, not small
+incised features. A percentile is wrong in both directions, and the notebook
+step returning zero on its own fixture is precisely the "passes on a trivial
+case" failure I had written into that fixture's docstring the session before.
+
+**Second wrong correction.** The 2% warning was invented from a single data
+point. Measured: the threshold that correctly recovers the known gullies admits
+**19–22%** of cells on the `slope_std` test alone, and the four tests together
+plus skeletonizing cut that to six features. `slope_std` is not meant to be
+selective by itself, so the warning fired on good runs. Deleted, with the
+measurement left in the code where the warning was.
+
+### What the distribution actually says
+
+`slope_std` over gullied terrain is bimodal in the log — smooth ground and
+incised ground, with a clear gap:
+
+| fixture | p75 | p90 | jump |
+|---|---|---|---|
+| known 14 m gullies | 0.0173 | 0.1561 | 9x |
+| branching valley network | 0.0085 | 0.1001 | 12x |
+
+Where that gap falls in percentile terms depends on what fraction of the
+landscape is incised — the thing being measured, so it cannot be assumed in
+advance. `suggest_slope_std_min` puts Otsu's method on `log10(slope_std)` and
+finds it without being told: p80.5 and p77.6 on the two fixtures, recovering
+the known gullies at a measured 16.0 m against a built 14 m.
+
+It is **advisory**. It returns a number and the evidence for it; `slope_std_min`
+stays an ordinary explicit argument. `separation_decades` is what says whether
+the split means anything at all, and the 0.4 cutoff is measured rather than
+picked: 1.02 and 1.20 decades on the two gullied fixtures, 0.068 and 0.083 on
+tilted planes with only noise on them.
+
+The RUNNING.md validation table — 6 gullies, 6.53 km, matched one-to-one at
+1383/1263/1146/1024/926/783 m — now runs at the threshold the selector chose on
+its own rather than one hand-tuned to 0.05.
+
+### The coupling that is invisible until you look
+
+`exclude_streams=True` with `stream_threshold_km2` *below* `max_drainage_km2`
+means every cell draining between the two is both gully-eligible and a mapped
+stream, and the exclusion wins — it silently deletes the largest gullies.
+`detect_gullies` now warns. Setting both to the same number makes the sets
+disjoint by construction, which is what the notebook does.
+
+I also over-corrected here and had to back it out: I scaled the doc example's
+*ceiling* down to 0.05 km2 when the thing that broke on a 2.5 km2 fixture was
+the *stream threshold*, and the ceiling change quietly invalidated the
+validation table. Measured the configurations, restored the ceiling, lowered
+only the threshold. The notebook now catches the too-small-extent case and
+falls back with exclusion off rather than raising.
+
+**Tests: 271 (up 12).** New: `tests/test_slope_std_suggestion.py` (6), plus 6 in
+`test_gully_plausibility.py` and 1 in `test_notebook_runs.py`. One of them
+asserts that p99 finds *nothing* on the fixture — so if that ever stops being
+true, the argument in the docstring is out of date and gets rewritten instead
+of standing as folklore.
+
+### Still open
+
+* HAND exceeds relief on 17,741,388 cells of Sam's run. Masked and warned; the
+  routing-into-nodata cause is not fixed.
+* `detect_gullies` is not wrapped by the api persistence layer, so gully runs
+  do not appear in `runs/`.
+* Unverified here because the proxy blocks the downloads: `compare-backends`,
+  `geology --selftest`, `naip --selftest`, `inundation --selftest`.
+* Never validated against field data: the riparian band, valley form.
+
+## Session of 2026-09-21 — verification pass, and reading a real gully run
+
+No new features. Sam's instruction was that I had been adding modules faster
+than I was verifying them and then finding my own bugs afterwards, which is
+exactly what the record shows. This session is the other half.
+
+**The notebook had never been executed.** It is the entry point — what the
+installer points at and how the tool is actually used — and it was built by a
+script, syntax-checked cell by cell, and never once run.
+`tests/test_notebook_runs.py` now executes it top to bottom with nbclient
+against a synthetic branching valley and asserts every cell completes. Every
+notebook failure reported to date would have been caught by it.
+
+The first fixture I wrote for that test produced **4 segments over 2.5 km** —
+the notebook ran green while exercising almost nothing, which reads as coverage
+and is worse than no test. Replaced with a trunk valley, five tributaries and
+cut gullies: 44 segments, 24 km, gullies found, polygons written.
+
+That run also exposed that the shipped default `stream_threshold_km2=1.0` is a
+landscape-scale number which, on a few-km2 DEM, yields a handful of segments
+with no indication that the parameter rather than the terrain is the reason.
+`build_terrain` now says so.
+
+**An adversarial review of my own recent code found eight more defects.** All
+in modules I wrote in the previous two sessions. The severe ones:
+
+* **`classify.py` computed every area and width in CRS units.** On Sam's ftUS
+  DEM that made `drainage_km2` **10.76x too large**, `valley_width_m` 3.28x,
+  and `confinement_ratio` wrong by a different factor again because it divides
+  a foot width by a metre channel width. `valleyform.py` had no unit handling
+  at all: `max_search_m=3000` reached 914 m per side, `spacing_m=250` became
+  76 m, and `valley_relief_m` was written in feet.
+* **A steep U-shaped trough fell out of the Rosgen form path entirely.** The
+  U-shape branch only accepted `moderate`/`steep` side slopes, and real glacial
+  troughs are 0.6-1.0 — `very_steep`. So the common case dropped through to the
+  channel proxies and was typed IX ("ground moraine") without the measured
+  parabola ever being mentioned. That is precisely the case the feature exists
+  for.
+* **`restream()` decoded flow directions with ESRI codes regardless of
+  backend.** WhiteboxTools writes a scheme rotated 45 degrees, and
+  `d8_pointer` was being called without `esri_pntr=True` — so on a whitebox
+  terrain every HAND value would have been traced down the wrong neighbour,
+  silently, and the HAND invariant cannot catch a 45-degree error because it
+  rarely exceeds the DEM's relief. One convention everywhere now.
+* `valleyform` raised `KeyError` at the very end of a full run whenever the
+  segments' id column was named `segment_id` (a pandas merge collision), after
+  all the expensive work.
+* `_find_divide` returned `found=True` from its fall-through path, handing out
+  a "complete" flag for sections that found no crest — and `complete` is the
+  one thing that module's honesty rests on.
+* `mask_area_m2` was in CRS units beside two metric columns; one nodata cell
+  under a centreline NaN'd a whole gully's statistics (`np.mean` for
+  `np.nanmean`); the "window under 3 cells" warning was unreachable because the
+  value was clamped before the test.
+
+**Reading the Ruidoso gully run.** 10,739 features, **3,195 km against a
+1,767 km stream network — 1.8x the entire drainage network.** Median width
+31 m, depths to 37 m, 28% draining more than 1 km2, max 53.6 km2. Only **2.7%**
+(287 features, 57 km) are gully-scale. The 90th, 95th and 99th percentile
+widths are all **55.20 m**, which is the cross-section width — for those
+features no bank was found inside the section and the "width" is the limit of
+the measurement. 34.8% have zero usable cross-sections; 71.9% have fewer than
+three, so only 28% got a polygon.
+
+Nothing computed it wrongly. It is a parameter and scale problem: the
+notebook's own advice ("gullies usually sit above p90") selects the channel
+network on terrain whose only rough ground IS the channel network, and
+`exclude_streams` defaults off with no upper drainage bound.
+
+But the code should have said so and did not — it reported 31 m wide, 37 m deep
+"gullies" draining 53 km2 without comment. `_gully_scale_warnings()` now checks
+the four conditions that distinguish "found gullies" from "found the drainage
+network", and it is a separate function because the fixtures are too small to
+provoke several of them from a real run. A test reproduces the Ruidoso
+distribution from its own numbers.
+
+259 tests.
+
+## Session of 2026-09-17e — calibration that is actually iterative
+
+**"Why does step 6 calibrate breaks need to condition the DEM again?"** It
+doesn't, and it was. Same class of waste as the gully step, and worse.
+
+`confined_max` and `partly_confined_max` are two thresholds applied to
+`confinement_ratio` in the last few lines of `classify_segments` — and
+`confinement_ratio` is already a column in the segments layer the pass wrote.
+Changing a break is a relabel. The notebook told you to call `landscape_pass`
+again: conditioning, flow routing, HAND, valley bottom and re-segmentation,
+every time, in the step whose entire purpose is trying several values. On a
+1.94-billion-cell DEM that is **2.7 hours per iteration to relabel a column**.
+
+`reclassify_confinement()` reads the table, relabels, writes. Verified
+**bit-identical** to a full re-run (0 of 1547 segments differ, and
+`rosgen_candidates` matches too), 38x faster on a small fixture, and a test
+monkeypatches `rasterio.open` to assert it **never opens a raster at all**.
+
+`confinement_break_sweep()` is the other half: class counts and length
+fractions under several candidate break pairs, reading one table and writing
+nothing. That is what calibration needs — compare, then commit — rather than
+committing in order to find out. Notebook step 6 now sweeps, then applies.
+
+**Rosgen, measured.** With the chain fixed and the crosswalk consulting form
+first, on the 222-segment fan fixture with no geology at all:
+
+| | unresolved | types asserted |
+|---|---|---|
+| without valley form | 96.8% | I x6, VIII x1 |
+| with valley form | **82.0%** | I x18, V x13, II x9 |
+
+V and II are now proposed from cross-section shape where before they needed a
+geologic map. Confidence stays mostly `low`, which is correct: without geology
+the module's own documentation says II/V/VI, VIII/IX and X/XI cannot be
+separated, and shape narrows those groups without resolving them. A basis
+string now reads:
+
+> side slopes moderate (22%); cross-section U (n=2.23); 155 m floor-to-divide.
+> No glacial material mapped, so a broad colluvial valley (II) is not excluded.
+
+Worth stating plainly: a smooth range front can fit n > 1.6 where there was
+never any ice, so shape alone proposes V rather than asserting it, and II stays
+on the alternatives list until material confirms one or the other.
+
+247 tests.
+
+## Session of 2026-09-17d — the Rosgen chain was broken in five places
+
+Everything in the valley-type chain was tested in isolation and passing. Then I
+ran it end to end on a real fixture for the first time, and **it did not work at
+all** — 97% unresolved, and every one of the five causes was invisible to the
+unit tests because each component was correct on its own.
+
+This is the entry to read if you want to know why integration tests earn their
+keep.
+
+**1. The api took the parameter, then passed a function.**
+`api.rosgen_valley_types` had no `valley_form` parameter — an earlier patch
+script asserted after writing and died before the write landed — but its body
+already read `valley_form=valley_form`. Python resolved that to the
+module-level `valley_form` FUNCTION and passed it as a file path. No NameError,
+no type error, just `pd.read_csv(<function>)` downstream. This was live in v10.
+
+**2. A branching network is not one line.**
+`extract_cross_sections` merges a multi-feature layer into a single centreline,
+which is right for one reach and wrong for a network. On a 222-segment layer it
+produced **20 sections covering 9 segments**, all tagged `segment_id = 0`.
+`valley_form` now walks the features itself, reusing the exact geometry
+convention (origin on the line, left-hand normal from the local tangent) so
+offsets and bearings stay interchangeable, with one DEM handle for the network
+rather than one open per feature. 20 sections became 394.
+
+**3. The two sides of the join were keyed differently.**
+The segments layer names its id `seg_id`; the valley-form table keys on
+`segment_id`. The join looked only for `segment_id`, never matched, and
+discarded the evidence — with a warning that blamed the segments for a naming
+mismatch on our own side. Both ends now auto-detect.
+
+**4. The thalweg was in the next valley.**
+A valley section has to be long enough to reach the divides, so at
+`max_search_m = 2500` it is 5 km wide and routinely crosses into the
+neighbouring drainage. `nanargmin` over the whole transect then finds the lowest
+ground anywhere in 5 km. Measured: the thalweg came back at offset **−2494 m**,
+the far edge of the section, 886 m against a local channel near 1100 m.
+Everything downstream was measured from the wrong origin — a 446 m "valley
+floor" in the wrong basin, no divide on one side, nonsense Vf. It affected 436
+of 445 sections. The section origin sits on the mapped channel, so the floor is
+searched within `thalweg_search_m` of offset 0.
+
+**5. One bad side nulled the good one.**
+`side_slope`, `shape_n` and `valley_relief_m` were computed only inside
+`if L and R`, so a section with one side running off the DEM lost both. On the
+fan fixture `side_slope` existed for **23 of 222** segments. A section with one
+good wall still measures a side slope and a shape; only Vf and asymmetry need
+both divides by definition. Now 212 of 222.
+
+**And two design errors underneath them.**
+
+*Requiring both divides threw away the informative cases.* Only 12 of 394
+sections reached a crest on both sides — on real terrain a segment on a basin
+floor has no divide within kilometres — and the aggregation then filtered to
+complete sections, collapsing coverage from 222 segments to 5. But "no divide
+within 1.5 km and only 0.5 m of rise" is not a missing measurement. It says the
+valley is at least 3 km wide and flat, which is exactly what separates Rosgen
+VIII/IX/X from I/II. Sections now carry `quality` (`measured` /
+`lower_bound` / `unbounded_broad`) and `vf_is_lower_bound`, aggregation keeps
+every segment, and an unbounded flat search is reported as `vf_class =
+'very_broad'` rather than unknown.
+
+*The crosswalk consulted the proxies first.* Form was only reached in two
+branches, both requiring `confinement != "unconfined"` — and 216 of 222
+segments on that fixture are unconfined, so the measured side slopes and shapes
+were never looked at. `classify_from_form()` is now the primary path, using
+Rosgen's own discriminators (side-slope class, V-versus-U exponent, relief
+floor-to-divide, Vf breadth) and falling back to confinement and channel
+gradient only when the form is too thin to say anything. It returns `None`
+rather than guessing, because a type asserted from a truncated measurement is
+worse than an honest unresolved.
+
+*Also:* a one-cell valley floor measured **0 m** wide, because the width was
+`|off[hi] - off[lo]|` rather than `(hi - lo + 1) * step`. A single-cell floor is
+exactly what an incised V-notch canyon has, so Vf came back 0.0 for every
+incised section — the case Vf is most often asked about.
+
+`tests/test_valleytype_chain.py` pins all of it.
+
+## Session of 2026-09-17c — the TIN question, answered with numbers
+
+`tests/experiments/resolution_vs_tin.py`. One analytic channel of exactly known
+geometry (bank top at +/-8.0 m), **one** bank-top finder, and five ways of
+sampling the same ground — so the comparison measures the sampling, not the
+detector. 25 trials each, median error in metres:
+
+| sampling | 0.5 m | 1 m | 2.4 m | 5 m |
+|---|---|---|---|---|
+| raster (what geolens does) | +0.25 | +0.25 | +1.25 | +2.25 |
+| TIN built from that raster | **+0.25** | **+0.25** | **+1.25** | **+2.25** |
+| scattered points, same density | +0.50 | +0.75 | +1.75 | +3.00 |
+| TIN + breakline at the TRUE bank top | +0.25 | +0.25 | **+0.25** | **+0.25** |
+| TIN + breakline at the ESTIMATED bank top | +0.50 | +0.50 | +1.50 | +2.50 |
+
+Four findings, in order of how much they change what to do:
+
+1. **A TIN built from a raster is identical to the raster.** Not similar —
+   identical, at every cell size, to the last digit. It is a piecewise-linear
+   interpolation of samples you already have, so there is no information in it
+   that was not in the grid. Rebuilding the package on one would cost D8
+   routing, priority-flood, HAND, every distance transform and the tiling
+   architecture, and buy exactly nothing.
+
+2. **Irregular points at the same density are WORSE than the grid**, and the
+   gap widens with cell size (+3.00 vs +2.25 at 5 m, and the 90th-percentile
+   error is 5.55 m against 2.25 m). A regular grid guarantees a sample near the
+   break; scattered points only do so on average. This was the opposite of what
+   I expected.
+
+3. **A breakline makes the measurement resolution-independent.** +0.25 m at
+   0.5 m cells and +0.25 m at 5 m cells — a ninefold improvement over the
+   raster on coarse data. The geometry is carried by the line, not by the
+   sample density. This is why hydraulic modellers use breaklines, and it is
+   the real answer to "would a TIN help".
+
+4. **But the breakline cannot be bootstrapped, and I had proposed exactly
+   that.** In `REVIEW.md` I suggested a two-pass scheme: detect bank tops on
+   the raster, feed them back as breaklines, re-measure. Tested, it does not
+   work — the two-pass estimate is *slightly worse* than the raster it started
+   from (+1.50 vs +1.25 at 2.4 m; +2.50 vs +2.25 at 5 m). A breakline in the
+   wrong place creates a break there, so the second pass returns the first
+   pass's error with a confident-looking TIN wrapped around it. The gain in (3)
+   comes entirely from knowing where the bank is, which is external information:
+   a survey, photogrammetric breaklines, or hand digitising.
+
+**What this means for the Ruidoso data specifically.** The cells are 2.400045
+ftUS = **0.73 m**, not 2.4 m. At that resolution the raster already measures the
+bank top to +0.25 m — the same as a breakline TIN. There is nothing left for a
+TIN to recover. The lever that matters is not the data structure, it is not
+resampling away from native resolution.
+
+Also fixed this session, from the review list:
+
+* **`distance_transform_edt(..., return_indices=True)`** allocated a full-size
+  float64 distance array and discarded it, in three places. `return_distances=False`
+  removes it: measured 3.4x lower peak, and on a 1.94-billion-cell grid the
+  discarded array alone is **15.5 GB** (the review said 7.2 — it is float64, so
+  twice that).
+* **Valley gap closing bridged twice its documented width.** A morphological
+  closing of radius k bridges 2k, because the dilation advances k cells from
+  each side — verified, radius 5 bridges 10 cells. So `close_gaps_m=250` welded
+  valley strips 500 m apart into one polygon, doubling their `valley_width_m`
+  and pushing the confinement ratio across the unconfined break. It now uses
+  half the gap width, and the window is in true metres rather than CRS units.
+* **`hand_mean_m` was structurally always 0.** It averaged HAND over each
+  segment's own stream cells, and HAND is zero at a stream cell by
+  construction. It now averages over the segment's allocated valley cells,
+  which is the vertical counterpart to `valley_width_m`. Reading it exposed a
+  second bug in the same line: HAND was read raw, so the -9999 fill averaged
+  in and gave `hand_mean_m = -4233 m` on a landscape with a few hundred metres
+  of relief. Now 0 to 174 m, median 0.17.
+* **Run-log records collided within a second.** The JSON was overwritten while
+  the manifest was appended, so N rows pointed at one file holding the last
+  result — and a calibration sweep is exactly a loop of fast calls.
+* **`detect_headcuts` returned a path it had not written** when nothing
+  matched, which on a re-run was the *previous* run's headcuts reported as this
+  run's, with `headcut_count=0` beside them.
+* **The inundation valid mask counted never-observed ground as observable.**
+  `~excluded` is True where no scene ever looked, so with zero scenes
+  `valid_fraction` came back 1.00 over the whole grid and the low-observability
+  guard could not fire. Each scene's footprint is now accumulated and the claim
+  is bounded by it.
+* **The geology unit cache was shared across services**, so a `quaternary` call
+  after a `surface` call joined against the wrong DescriptionOfMapUnits table —
+  silently wrong where a MapUnit code existed in both.
+* **Riparian rasterised a full-size array per patch** to ask whether it touched
+  a stream. The label array already knows; it is now one pass.
+
+231 tests.
+
+## Session of 2026-09-17b — gully memory, and gullies as 2D
+
+**Gully detection on a grid that does not fit.** The mask criteria are four
+elementwise thresholds on four rasters. Each was read whole and cast to
+**float64**: 8 bytes x 1.94 billion cells x 4 is **62 GB**, plus a fifth array
+for drainage area — after the two expensive steps before it had already
+succeeded. There is no neighbourhood term in any of the four tests, so the mask
+tiles perfectly with no overlap; it is now built a block at a time into a bool
+array. Tests assert the windowed mask is bit-identical to a full read at block
+sizes 37, 64, 128 and 4096, and a source guard forbids `astype("float64")` from
+coming back.
+
+Three smaller wins from the same pass: slope_std and drainage area are now
+sampled by bounding window on the centrelines only (a few thousand cells, not
+two full grids); the gully directory stopped writing a second copy of the
+multi-gigabyte slope_std raster; and gully density now divides by **valid**
+cells rather than the bounding box, which on a DEM that is a third nodata was
+understating density by that fraction.
+
+`detect_gullies` now also states the expected peak before spending it. Thinning
+and labelling are whole-grid operations on a boolean array and there is no way
+to know that from outside.
+
+**"No gullies found" now names the culprit.** The mask builder returns how many
+cells passed each criterion on its own. It is nearly always one test doing all
+the rejecting, and without the counts there was no way to tell which — so the
+warning now says "the tightest test was slope_std, 0 cells passed it against
+4.1M for the loosest; start by relaxing slope_std_min=0.04".
+
+**Gullies as 2D footprints.** The detector already cuts cross-sections along
+every centreline and runs the verified bank detection on them — that is where
+`width_m` and `mean_depth_m` come from. The bank *positions* were reduced to a
+median and thrown away. Closing a polygon through them gives a footprint with
+measured edges: left bank tops in station order, right bank tops in reverse.
+World coordinates are rebuilt with the same convention `extract_cross_sections`
+used to cut the section (origin at `center_x`/`center_y`, left-hand normal from
+`bearing_deg`), so left and right cannot silently swap and tie the polygon in a
+bow. Same `gully_id`, so it joins straight back to the lines and the sections.
+
+**And the polygon test found a real defect on its way in.** I asserted the
+polygon area and `mask_area_m2` should roughly agree. They do not — the polygon
+is **6.5x larger** — and the polygon is the one that is right. On the fixture of
+known 14 m gullies:
+
+* polygon implies **15.75 m** (the one-sample bank-top offset already documented
+  at reach scale)
+* detector mask implies **2.45 m** — about one cell
+
+The thresholds (slope variability + negative TPI) select the steepest, most
+incised part of the section, which is a ribbon near the centreline, not the
+footprint. So `mask_area_m2` had been reported as the gully's area while
+understating it roughly six-fold, and `gullied_area_km2` inherited it. Both are
+fixed: the headline number now comes from the measured footprints, the mask
+field is documented as what it actually is, and the ratio is pinned by a test so
+nobody quietly "fixes" it back.
+
+226 tests.
+
+## Session of 2026-09-17 — the commodity layer, and what can actually be reused
+
+**The question: stop rebuilding VBET and confinement, reuse them instead.**
+Right instinct. The answer is not the one either of us expected, because of
+licensing.
+
+### What is actually available
+
+| Candidate | Verdict |
+|---|---|
+| **Riverscapes VBET / ConfinementTool** | **GPL-3.0.** geolens is MIT. Importing GPL code into an MIT package and distributing it makes the combined work GPL. Also not on PyPI, and built around a Riverscapes project XML / Cybercastor workflow rather than a library API |
+| **jtgilbert/VBET-2** | **No licence file at all** — which defaults to all rights reserved. Worse than GPL for reuse |
+| `pip install vbet` | A **gambling bot** (`vbet` 6.20.4, "a virtual betting bot server"). The name is taken on PyPI |
+| `pip install fct` | A **radio-astronomy image viewer** (FCT 1.0.5, "Basic Library for Viewing Radio Images"). Not the Fluvial Corridor Toolbox |
+| **WhiteboxTools** | **MIT.** Rust binary, 567 tools, already an optional backend here |
+
+Two of those name collisions would have installed something entirely unrelated
+into a working environment. Worth knowing before typing `pip install vbet`.
+
+So "reuse VBET" as literally stated is not available to an MIT package. But the
+*goal* — stop maintaining a parallel commodity layer — is, through
+WhiteboxTools, which is MIT and already wired in. It has every primitive the
+hand-rolled code duplicates:
+
+* `breach_depressions_least_cost` — carves an outlet instead of flooding a
+  basin, so valley-floor elevations survive conditioning
+* `d8_pointer`, `d8_flow_accumulation`
+* **`elevation_above_stream` — this *is* HAND**
+* `extract_streams`, `relative_topographic_position`, `standard_deviation_filter`
+
+### What I did about it
+
+The whitebox backend existed and had **never been verified**. Making it the
+default on that basis would be trading one unverified implementation for
+another, so instead:
+
+* **`compare_backends()`** runs both on the same DEM and reports max
+  contributing area, stream-mask IoU, HAND difference and the speedup, with a
+  verdict. It builds its own collared V-valley fixture — collared deliberately,
+  because a clipped DEM is the normal case and the one that broke depression
+  filling.
+* **The `>=` / `>` split between backends is fixed.** WhiteboxTools'
+  `ExtractStreams` applies `>=` where geolens applies `>`, so the same DEM
+  through two backends put the channel head one cell apart and shifted every
+  segment index below it. Accumulation is an integer cell count, so `>= t+1` is
+  exactly `> t` and they now agree by construction.
+* **`backend_notes()`** explains availability in words. `pip install whitebox`
+  succeeding tells you nothing: the binary is downloaded on first construction
+  of `WhiteboxTools()`, and behind a proxy that fails with a 403 much later,
+  during an analysis.
+
+**I could not verify whitebox here** — the binary download is blocked in this
+container (403). That is why this ships as a measurement tool rather than a
+switched default.
+
+### Rosgen, rebuilt on the right evidence
+
+`landscape/valleyform.py` now measures the valley floor-to-divide, and the
+crosswalk takes it. Tested against valleys of exactly known geometry:
+
+    z(x) = relief * ((|x| - half_floor)/run)**n
+
+so Vf, side slope and the shape exponent all have analytic truth.
+
+**One real subtlety, found by the test failing.** The shape exponent separates a
+glacial trough (n≈2) from a V-notch (n≈1), and the first implementation
+returned **1.33 for a true 2.0** — which would read as a V. The cause is not a
+coding slip: a parabola is genuinely flat near its vertex, so a 2 m floor
+tolerance on a 300 m-relief trough calls the first **41 m of a 500 m wall**
+"floor". The toe is cut off, and with it the part of the curve carrying the n=2
+signal. Fitting log(rise) against log(distance) from the wrong origin is then
+biased low.
+
+Fitting the offset instead of assuming it is zero recovers it: **1.02, 1.51,
+2.00, 2.50** against true 1.0, 1.5, 2.0, 2.5. The offset is a physical quantity
+— how far into the wall the floor detection reached — not a free parameter.
+
+What the crosswalk can now do that it could not:
+
+* **Assert V (glacial trough) without a geologic map.** Shape does it; no
+  fluvial process makes a U at valley scale.
+* **Exclude V on shape** in the confined-and-moderate case, which used to
+  return "II, V or VI, material decides" and now returns II with a reason.
+* **Raise VI from never-assertable to a flagged candidate** where the valley is
+  persistently one-sided. Asymmetry is not proof of structural control, but it
+  is its signature, and it is the first DEM-derived evidence for it here.
+
+### Also fixed
+
+* **`_slope` fabricated terrain.** nodata became slope 0.0 with no nodata tag
+  (630 million fake zeros on the Ruidoso DEM), and the ring of *valid* cells
+  around each hole also read 0.0 because NaN propagates one cell through a
+  centred difference. `valley._fuzzy_high` reads slope 0.0 as **maximum**
+  evidence for "flat valley floor", so a closed ring of strongest-possible
+  valley evidence formed around every void. Now uses a one-sided difference at
+  the ring — verified to return the true 0.6 rather than 0.0 or the 0.3 a
+  nearest-fill would give — and float32 rather than float64, halving every
+  temporary.
+* **TPI and curvature filled nodata with the global mean elevation**, turning a
+  void into an artificial plateau and producing a ring of confident false
+  gullies around every hole. Now a masked local mean; a test asserts zero
+  gullies on a uniform plane with a hole in it.
+* **`raster.percentiles()`** reads decimated. The notebook used to read a whole
+  raster and partition four copies of it — 15 GB in one cell on the Ruidoso
+  grid, after the two expensive steps had already succeeded.
+* **`restream()`** re-derives the network at a new threshold with no re-routing,
+  bit-identical to a full rebuild.
+
+212 tests.
+
+## Session of 2026-09-16c — inline plots, riparian band, NAIP streaming
+
+**Inline plotting (`geolens/view.py`).** Step 7 of the notebook used to be QGIS
+`iface` calls, which render as markdown outside QGIS — so on Sam's machine it
+was a block of text pretending to be a map. Replaced with real matplotlib:
+`show_dem`, `show_mask`, `show_vector`, `show_sections`, `show_landscape`, and a
+`show(thing)` that dispatches on what it is given.
+
+Rasters are read **decimated** via rasterio's `out_shape`, which uses overviews
+when they exist, so drawing a multi-gigabyte DEM costs the same as drawing a
+small one. Confinement classes and valley types get fixed colour tables, because
+a categorical layer drawn with a continuous colormap changes colour between runs
+whenever the class counts change.
+
+Two silent failures found writing it, both of which rendered nothing and raised
+nothing: `show_sections` read `offsets`/`elevations` off the section result,
+which produces `points`; and `show_landscape` looked for `valley_bottom` where
+the key is `valley_raster`, quietly dropping a panel.
+
+**Riparian band (`geolens/riparian.py`).** The arid-country answer to the
+inundation problem from the last session. Phreatophytes rooted in the alluvial
+aquifer mark the floodplain whether or not water is flowing today, which is the
+opposite of a flood map's problem.
+
+Measured as **NDVI in excess of the local upland background**, the same relative
+construction as `excess_drop_m` on headcuts and `min_above_base_m` on fans. That
+is what makes a fixed threshold survive a drought year, a different sensor or a
+different basin — a test shifts the whole scene by -0.08 NDVI and asserts the
+area moves less than 10%. Scaled-integer NDVI (Sentinel-2 ships x10000) is
+detected and rescaled.
+
+Cut to low HAND, because greenness alone is not riparian: a north-facing slope
+or a mesa-top pivot is green and is not floodplain. A test asserts the green
+hilltop is excluded, and a second test asserts it **leaks in** when HAND is not
+supplied, so the argument is understood as load-bearing rather than optional.
+
+On the fixture: **100% of the corridor recovered, 0.481 km2 connected against
+0.481 km2 of truth.** A detached irrigated field lands in `unconnected_km2` and
+in `suspect_patches`, by connectivity to the stream network and by
+rectangularity.
+
+Two things worth keeping:
+
+* **`percentile_filter` is not slow, it is impossible.** A moving percentile is
+  a rank filter — it sorts every cell in the window per output pixel. A 2 km
+  background window on 10 m cells is 201x201, 40,401 values sorted per pixel,
+  and it raised MemoryError on a *400x300* test raster. On 1 m NAIP the same
+  window is 2001x2001, four million per pixel. Replaced with `_coarse_percentile`:
+  block-reduce, filter on the coarse grid, resample back. The background is a
+  smooth "how green is this part of the country" surface and never needed the
+  resolution.
+* **I overstated a limitation and the test caught me.** I wrote that a field
+  contiguous with the corridor can never be flagged; the test showed it
+  sometimes is, by luck, depending on whether the field dominates the merged
+  patch's shape. The docstring was wrong, not the test. The test now asserts the
+  *inflation*, which is certain, and deliberately does not assert that the flags
+  catch it.
+
+**NAIP streaming (`geolens/naip.py`).** 1 m four-band imagery over a DEM's
+extent, from Microsoft Planetary Computer's STAC, as **Cloud Optimised GeoTIFFs
+read by HTTP range request** through `/vsicurl/`. Only the windows overlapping
+the DEM are ever transferred — a full NAIP quad is ~500 MB and a typical reach
+needs a few percent of one.
+
+Scenes are mosaicked **newest-first, not averaged**: averaging across vintages
+blends a 2021 flight with a 2018 one into an image of no particular date. The
+contributing years come back in `years`, so a mixed-vintage result is visible.
+
+Tiles are cached to `<output>/naip/` (or `GEOLENS_NAIP_CACHE`) **with the flight
+year in the filename**, at Sam's request, so the imagery a classification was
+made against is still on disk when it is time to truth it.
+
+Two bugs: `/vsicurl/` was being prefixed onto local paths as well as URLs
+("Missing url parameter"); and the nodata fixture zeroed only the NIR band,
+leaving red valid, which is not how real NAIP nodata looks — it is zero in all
+four.
+
+**And a third, worse one, found writing the notebook step: the module defeated
+its own purpose.** NDVI was built on the *AOI raster's* grid. Point it at a 10 m
+DEM — which is the normal case — and every output cell is the mean of a hundred
+NAIP pixels. The result is a correct, clean, 10 m NDVI, and it throws away
+exactly the resolution NAIP was streamed for: a 20 m desert riparian corridor is
+two cells at 10 m and twenty at 1 m, and two cells is an edge effect rather than
+a measurement. Nothing failed. Nothing warned. It would have been invisible.
+
+The fix is in three parts, because the obvious one alone makes things worse:
+
+* `resolution_m` now defaults to **1.0**, so NDVI is built at NAIP's resolution
+  over the AOI's extent. `resolution_m=None` restores the AOI grid and warns
+  about what that costs. A cell-count ceiling refuses a county at 1 m with a
+  message instead of being OOM-killed.
+* **The resolution is part of the cache key.** Without that, a 10 m window
+  cached by an earlier run answers a 1 m request: right shape, right CRS, 10 m
+  information inside it. That is the same class of silent-wrong as the original
+  bug.
+* **`riparian_band` now resamples HAND and streams onto the NDVI grid** instead
+  of skipping the restriction on a shape mismatch. This was the part that made
+  the rest safe to change: HAND at 10 m and NDVI at 1 m never match, and the old
+  code dropped the height cutoff with a warning — leaving every green mesa top
+  in the band and still returning something that looks like an answer. A test
+  asserts a 50 m HAND still excludes the hilltop, and another asserts the
+  "resampled up, so the edge is 50 m fuzzy" warning is raised rather than the
+  mismatch passing quietly.
+
+178 tests.
+
+**Open question for Sam, not yet answered:** he raised object detection from
+NAIP. *What* is being detected decides everything. Discrete things — headcuts,
+structures, individual trees, bank erosion scars — need labelled examples and a
+model, and the labelling is the expensive part, not the model. Riparian *extent*
+is a segmentation problem and is already served by the NDVI-excess band above.
+The `learn/loop.py` worksheet machinery is the natural place to collect labels
+if he wants the first kind.
+
+## Session of 2026-09-16b — BigTIFF, inundation, calibration loop
+
+**The 4 GB TIFF limit, hit on a real DEM.** `TIFFAppendToStrip: Maximum TIFF
+file size exceeded`. Classic TIFF offsets are 32-bit; float32 crosses 4 GB at
+~1.07 billion cells, a 32,000 x 32,000 grid — 64 km square at 2 m. Every fixture
+here is a few hundred cells across, so no test would ever have caught it. All 13
+raster writes now go through `raster.gtiff_profile`, which sets
+`BIGTIFF=IF_SAFER` (not `IF_NEEDED`: with compression GDAL cannot predict the
+size and `IF_NEEDED` decides from an estimate a compressed write can overshoot)
+and tiles anything large. A test greps the source for hand-built GeoTIFF
+profiles so a fourteenth call site cannot reintroduce it.
+
+**Observed flood extent (`geolens/inundation.py`).** Copernicus GFM via EODC's
+STAC API — 20 m, 2015 to now, CC BY 4.0, no API key. Chosen because
+`ensemble_flood_extent` excludes normally-wet pixels by construction, so it is
+the overbank anomaly rather than total water.
+
+Three obvious alternatives are **circular** and are documented as such rather
+than quietly used: NOAA FIM is HAND-based, FEMA NFHL is hydraulic modelling over
+a DEM, OPERA DSWx-S1 masks by HAND threshold. Validating a DEM-derived
+floodplain against any of them compares a model to a model.
+
+The metric is **recall only**, over observable pixels, and there is a test
+asserting precision/IoU/F1 never appear in the output. A correct floodplain
+exceeds any observed extent; reporting precision invites optimising it, and
+optimising it means shrinking the floodplain to whatever SAR caught.
+
+**Arid systems: documented as the wrong tool.** Sam works ephemeral to
+intermittent country. Two problems compound. A monsoon flood lasts hours against
+a 6-12 day revisit, so coincidence is a couple of percent per event. Worse, a dry
+sandy channel bed is smooth at C-band and reads dark exactly like open water —
+GFM lists "water look-alikes (flat impervious, sandy soil)" among its exclusions,
+so a desert wash either gets excluded (removing the corridor of interest) or read
+as flooded while bone dry. `arid_signature` in the result flags the pattern.
+**The arid-region equivalent is riparian vegetation** — phreatophytes rooted in
+the alluvial aquifer map the floodplain far more stably than flow does. Not built
+yet; it is the obvious next module for the Southwest.
+
+**The calibration loop (`learn/loop.py`).** The pieces existed; nothing joined
+them. `write_worksheet` -> fill it in in GIS -> `ingest_worksheet` ->
+`run_cycle`. Design points that carried the weight:
+
+* **It can refuse its own output.** `keep_current` when the new fit does not beat
+  the incumbent on identical held-out folds.
+* **A permutation null, and it took three attempts to get right.** The first
+  version recommended `adopt` on *pure random data* — held-out 0.448 against an
+  incumbent 0.337 looked like an improvement. In-sample separability overfits,
+  and cross-validation alone does not save you when folds are small. Fix: run the
+  whole pipeline on shuffled labels. Comparing against the null's mean + 0.05 was
+  too lenient; against its 95th percentile the real score cleared it by 0.005,
+  a coin flip reported as a result. The bar that works is **the null's mean plus
+  two of its own standard deviations** — self-scaling, because with few labels
+  the null is wide (mean 0.34, sigma 0.06 on 60 points) and with many it tightens.
+* Stratified folds, or a 5-fold split on 5%-minority data produces folds with no
+  minority class at all.
+* A learning curve, because "should I label more" is the question people actually
+  have.
+* Worksheets do **not** pre-fill the human column — people confirm a default far
+  more readily than they generate an answer. Agreements are stored alongside
+  corrections, or every fit is biased toward the cases where the tool failed.
+
+134 tests.
+
+## Session of 2026-09-16 — fans solved, Rosgen built
+
+**Alluvial fans: 3/3, no false positives.** Apex within 7 m, area -4.9%, radius
++2.9%, radial gradient -1.8%.
+
+The apex is the **concave break in the channel's own long profile** -- gradient
+falling from the canyon's value to the fan's, 10% to 5% within a hundred metres
+on the fixture. That is `detect_headcuts` with the sign reversed, walking the
+same D8 graph. Window length matters more than anything else: 100 m puts every
+apex within one cell, 250 m moves the median error to 351 m, because a long
+window averages canyon and fan together.
+
+**The fixture was wrong a THIRD time, and that was the whole problem.** The cone
+was built at `basin_elevation + radius x slope`, putting the apex **87 m above
+the canyon floor feeding it** -- a dam across the mouth. Flow could not cross
+it, priority-flood flooded the canyon, and routing escaped around the fan's
+lateral margin. Every apex detector for three sessions landed on that margin
+channel, 500-800 m off in *y*, and I read the error as a tuning problem because
+I only ever looked at the distance, never the direction. Measuring dx and dy
+separately is what broke it open: dx was +145 m and dy was +735 m, which is a
+point on the fan's edge, not its toe.
+
+`make_fans.py` now asserts its own geometry on every build -- step across the
+mouth, apex elevation against the canyon floor. Each of the three fixture bugs
+would have been caught by one line of that and instead cost a session each.
+
+Two other things that had to be fixed, both of which returned confident nonsense:
+
+* **The grow died two cells from the apex.** The apex sits ON a slope
+  discontinuity -- that is what makes it an apex -- so smoothing bleeds the 30%
+  range face into the first fan cells. The apex cell's smoothed slope reads
+  0.532 against a 0.01-0.15 band. The frontier hit that, marked every cell seen
+  and rejected, and returned nothing. The grow now suspends its slope test
+  within one smoothing radius of the apex.
+* **The slope-noise trap, now self-correcting.** `auto_slope_floor` measures how
+  steep the flattest ground in the DEM actually reads (a low percentile of
+  smoothed slope) and raises `fan_slope_min` above it. With it off, the same DEM
+  gives 3.34 km2 fans instead of 0.73 km2. This is the trap that once produced
+  139 km2 of fans on a 49 km2 DEM, and it is no longer a warning you can ignore.
+
+**Rosgen valley types: built, logic verified, thresholds uncalibrated.**
+`landscape/rosgen.py` crosswalks confinement + gradient + surficial material +
+detected fans to types I-XI. 23 tests, including an exhaustive sweep asserting
+that every returned type is real and that **VI is never asserted** -- it is
+defined by structural control, which neither a DEM nor a geologic map shows.
+
+The honest result, measured on the fan fixture: **without geology 94% of
+segments are unresolved; with it, 19%.** The types geometry cannot separate
+(II/V/VI, VIII/IX, X/XI) are most of the classification. Unresolved segments
+return their `alternatives` and a `basis` string saying which evidence is
+missing, rather than a confident guess.
+
+Still to do here: the gradient breaks (0.5 / 2 / 4 / 10%) are my encoding of
+Rosgen's descriptive classes, not values he published. Field-check a dozen
+valleys and move them.
+
+## Session of 2026-09-15
+
+**Install, fixed properly.** `pysheds/__init__.py` contains one line
+(`__version__ = "0.5"`) and imports nothing, so `import pysheds` succeeds with
+none of its dependencies present. Both the installer's dependency-filling probe
+and `terrain.available_backends()` tested exactly that, passed, and reported a
+backend as ready that then died on a missing `geojson` at first real use. Both
+now probe `pysheds.grid`, and `geojson`/`looseversion`/`affine` are declared
+outright. The installer's smoke test now runs terrain + HAND, so this class of
+failure surfaces at install time rather than in a notebook.
+
+**Headcuts: done, verified.** `detect_headcuts` now uses
+`topotoolbox.StreamObject.knickpointfinder` and walks the stream *graph* rather
+than a traced raster path — an edge is a real connection by construction, which
+makes the old 380 m-drop bug impossible. **6 of 6 on the fixture, no false
+positives, every point within 3–6 m of its known position.**
+
+Three things that had to be right, each of which scored 0/6 when it was not:
+
+* **`excess_drop_m`, not `drop_m`.** Subtract what the reach below would have
+  lost over the same distance. Raw drop reads 3.1 m on a 2.2 m headcut because a
+  12 m window on a 4.5% hillslope collects half a metre of hillslope fall.
+* **Upstream-most per line, by ELEVATION.** A headcut is the migrating head, so
+  it is the furthest-upstream step, not the biggest — selecting the largest
+  scores 1/6. Selecting by smallest contributing area scores 0/6, because short
+  headwater stubs of unrelated streams sit within the join distance of a gully's
+  downstream end and carry less drainage than the gully's own head. Elevation is
+  the only unambiguous measure. (Smallest `x` also scores 6/6 here, but only
+  because these gullies happen to run west to east. That is the fixture, not a
+  rule.)
+* **Do not call `removeedgeeffects`.** It removes every stream touching the
+  boundary and takes the gully heads with it: 6/6 becomes 0/6. Edge artefacts
+  are exposed as an `edge_m` column instead, so the caller filters rather than
+  having real features silently deleted.
+
+Also: `stream_threshold_km2` must be small (0.005 default) or the upstream gully
+heads are not in the network to be found at all. And pass `lines` — without it
+recall is identical but precision is ~20%.
+
+**Geology fetching: added.** `geolens.geology` fetches surficial and bedrock
+material by geometry from the **USGS Cooperative National Geologic Map**
+(released Aug 2025, v2 Sept 2026) — public domain, no key, polygon queries, and
+a 37-term Quaternary material vocabulary that maps nearly 1:1 onto Rosgen valley
+types. This unblocks the Rosgen crosswalk.
+
+Findings from the survey worth keeping:
+
+* CNGM supersedes SGMC and Soller DS-425 for this purpose. DS-425 is 1:5,000,000
+  and download-only — a hundred times too coarse.
+* **Macrostrat's polygon endpoint is silently broken.** `/carto/{scale}?shape=`
+  documents a WKT parameter, ignores it, and returns global results led by
+  Arctic Ocean basalts — for a point *and* for a polygon. It looks like success.
+  Its point API is fine and reaches finer source maps; use it only that way.
+* HyRiver does not cover geology at all. No maintained Python package fetches
+  geology by geometry, so this is a genuine gap rather than a re-wrap.
+* `macrostratpy` has no licence file and was last touched in 2024. Do not depend
+  on it.
+
+**Untested in one specific way:** outbound HTTPS to `services.arcgis.com` is
+blocked in the build container, so the parsing, joining, clipping and
+summarising are tested against recorded response shapes (26 tests) but the live
+call never ran. `geolens geology --selftest` exercises it against a known area
+of the Colorado Front Range. Run it once before trusting a geology result.
+
+**Persistence: added.** Every `geolens.api` call now writes its result,
+arguments, duration and output paths under `<output>/runs/`, with a
+`manifest.jsonl` index and `api.run_history()` to read it back. Cheap read-only
+calls are excluded so they do not bury the expensive runs. `GEOLENS_PERSIST=0`
+turns it off. One bug found writing it: `np.float64` subclasses `float`, so a
+NaN passed straight through `isinstance(obj, float)` and `json.dumps` wrote a
+bare `NaN` — invalid JSON that breaks every strict parser reading the file back.
+
+**Alluvial fans: narrowed, not solved.** Two real findings, no shipped fix.
+
+1. **The fixture was wrong again.** It carved canyons through the range but left
+   the range surface sheeting east past them, so each canyon collected only its
+   own 80 m width — about 0.2 km² at the mouth, below any sensible stream
+   threshold. The entire range held **9 stream cells**. There was no confined
+   reach above any apex, so an apex detector driven by confinement transitions
+   had nothing to find, and the detector looked broken when the terrain was.
+   Fixed by tilting the range surface toward the nearest canyon
+   (`RANGE_CROSS_SLOPE = 0.12`); the range now carries 3.8 km² of drainage and
+   3899 stream cells. **This is the second time a fan result was a fixture bug.
+   Check the fixture first.**
+2. **Neighbourhood mean slope cannot measure confinement here.** A fan surface
+   at 5.5% is steeper than the basin at 0.4%, so it reads as "confined" and the
+   downstream-most confined cell lands at the fan *toe*. The signature is a
+   miss of ~720 m, which is the fan radius. Switching to incision (how far a
+   cell sits below its surroundings) cut candidates from 97 to 5–7 but did not
+   move that 720 m — the toe is genuinely incised relative to its surroundings
+   too.
+
+   The fix remains what it was: drive apex finding from the confinement
+   transition `classify_segments` already computes per segment, not from a
+   raster proxy. Everything needed for that now exists and the fixture is finally
+   honest.
+
+
+**To run it: [RUNNING.md](RUNNING.md).**
+
+## TL;DR
+
+Reach scale and landscape scale both work and are verified. So do gullies,
+headcuts, fans, the Rosgen crosswalk and the riparian band. The three fetchers
+(geology, NAIP, inundation) have tested logic and **untested live calls** — run
+their selftests. A research pass found that several pieces of this package
+duplicate mature libraries — read "Don't rebuild these" before writing more
+code.
+
+*(Everything below this line predates the session log above and is kept for the
+failures it records. Where the two disagree, the session log is current.)*
+
+---
+
+## Working and verified
+
+**Reach scale** — cross-sections, profiles, channel/bank/floodplain delineation
+by slope break. Against a synthetic compound channel: floodplain width 0.00 %
+error, entrenchment ratio 2.59 %, bank top within one sample.
+
+**Landscape scale** — HAND, valley bottom, network segmentation, confinement
+classes. Against a synthetic landscape: wide valleys (60-93 cells) 0.0-0.7 %
+error; narrow valleys (10-16 cells) 25-30 %, which is the resolution limit.
+667 k cells end to end in 5.8 s.
+
+**Gully detection** — slope standard deviation + negative TPI + slope + drainage
+band, thinned, vectorized, and merged into whole features. 6/6 on the fixture.
+
+`python quickstart.py` · `geolens landscape <dem>` · `python -m pytest tests/ -q`
+
+`python tests/_doccheck.py` executes every snippet in RUNNING.md — 18/18 pass.
+Run it after any API change so the docs cannot drift from the code.
+
+**Gully detection** finds exactly 6 of 6 known gullies on the fixture and 91 %
+of total length (6.53 of 7.20 km), matched one-to-one. Over-segmentation is
+fixed: `merge_fragments` now joins fragments that continue each other
+(endpoints within tolerance, outward directions roughly opposite) after
+`linemerge`, which alone cannot resolve junctions. Insensitive to the merge
+angle across 30-60°, so it is not a knob you have to tune.
+
+Width and depth are now **measured**, not proxied: cross-sections are cut along
+each detected centreline and the verified reach-scale bank detection runs on
+them. Mean depth lands within 1 % of truth (2.97 vs 3.0 m); width is one sample
+wide (16.0 vs 14.0 m at 2 m cells), the same bank-top offset measured at reach
+scale. `volume_m3` assumes a parabolic section (0.667 x w x d x L) — replace
+that shape factor if your gullies are closer to trapezoidal.
+
+## Memory and tiling: SOLVED
+
+Superseded the earlier "coarsening is the only safe option" position. It was
+wrong, and the correction matters.
+
+**The insight: only flow accumulation has a global dependency.** A cell's
+contributing area depends on everything upstream. Slope, TPI, distance
+transforms, region grows, cross-sections — all local. So route once over the
+full grid, then tile the local work against that.
+
+`landscape/flow.py` does the routing in the smallest dtypes that carry the
+information: uint8 flow direction, uint8 in-degree, float32 accumulation.
+At 2 m over 3 M acres (3.0 billion cells) that is ~30 GB — fits in 128 GB.
+Priority-flood filling, Kahn-sweep accumulation, reverse-traversal catchments;
+all O(n) or O(n log n), no recursion.
+
+Verified: **accumulation matches pysheds exactly** (max 651,086 = 651,086,
+network IoU 99.2%) and runs faster in 10 MB of arrays on the test fixture.
+
+`build_terrain(..., flow=...)` clips the global flow to a tile so contributing
+area is inherited rather than restarted. With that, **grid tiles reproduce an
+untiled run to 0.1%** (187.6 vs 187.4 km at two different tile sizes). Watershed
+tiling is no longer needed — tile shape stops mattering once the global quantity
+is solved. `complete_watersheds()` is still there and verified to preserve
+drainage area exactly (0.00% error) for when a true watershed unit is wanted.
+
+**Two bugs found on the way, both silent:**
+
+* **float32 epsilon.** The depression-fill increment was a fixed `1e-5`, but
+  float32 spacing at 1900 m elevation is `1.2e-4`. The addition was a no-op:
+  filled cells stayed exactly level, 4,144 cells ended up with no downslope
+  neighbour, and each became a spurious outlet that shattered the network into
+  fragments (max accumulation 20k instead of 651k). The increment now scales
+  with elevation magnitude. **Any fill-by-epsilon code has this bug latent.**
+* **Per-tile output collision.** Every analysis writes to fixed filenames under
+  the guard's output directory, so tiles sharing one guard overwrote each other
+  and every returned path pointed at the last tile's files. The merge then
+  produced one tile's features repeated N times — invisible, because the paths
+  and the feature counts all looked plausible. `run_tiled` now gives each tile
+  its own directory and warns if `fn` does not accept a guard.
+
+A third, in the merge: clipping shortens geometry but leaves stored attributes
+alone, so summing `length_m` after clipping overstated the total (117% of the
+untiled run). Length is recomputed from clipped geometry; ratio-derived width
+fields are set to NaN on clipped features, with `length_m_preclip` retained.
+
+## Cross-sections as GIS features
+
+`api.export_cross_sections()` writes section traces as a shapefile and
+GeoPackage with a lookup table, plus per-section plots. Read `xs_id` off the
+attribute table in GIS, then `api.plot_cross_section_by_id(result, N)`.
+The stacked overlay plot remains, but it is for eyeballing a reach, not working.
+
+`api.representative_sections()` picks the **medoid** of each reach — the real
+section closest to the centre of the reach's distribution, standardised per
+metric. Deliberately not a mean: an average cross-section is a shape that exists
+nowhere on the ground. Group by `confinement` (follows the geomorphology) or
+`station` (equal lengths).
+
+One bug worth remembering: the medoid initially required only "some metric
+present", but `relief_m` survives a failed delineation, so a section with no
+bankfull at all was median-filled to the centre and chosen as most typical. It
+now requires measured channel geometry, and returns nothing rather than
+inventing a representative for a reach where nothing was measurable.
+
+## Superseded: the old tiling caveat
+
+`plan_run()` estimates peak RAM from the DEM header and, when it will not fit,
+names the cell size that would. `api.resample_dem()` does the coarsening.
+**That is the recommended fix and it is correct** — the network stays whole.
+
+`api.landscape_tiled()` splits into subwatersheds via D8 pointer-jumping over
+the flow graph, absorbing at stream cells so tiles are subwatersheds rather than
+one terminal basin. It works, and tiles are genuinely smaller — but **tiling
+truncates drainage area at every boundary**, so the merged network is badly
+short (6.4 km of 187 km on the test landscape). The warning and a
+`network_loss` block are in the result; a test pins the behaviour so nobody
+"fixes" the warning away. Use it only when coarsening is impossible.
+
+An unsolved version of this would be worth building: route flow once on the full
+(or coarse) extent, then pass that accumulation into each tile so contributing
+area survives the cut. That is the standard approach and would make tiling
+correct.
+
+## Fixed, with the failure kept on record
+
+**`detect_headcuts`** used to compute gradient assuming consecutive traced-path
+points were adjacent cells; when a trace merged disconnected fragments it
+reported 380 m drops on a DEM with 85 m of relief. Replaced 2026-09-15 with
+`topotoolbox.knickpointfinder` walking the stream graph. 6/6 on the fixture,
+no false positives, 3-6 m position error. See the 2026-09-15 session notes.
+
+**Alluvial fan apex detection** scored 0/3 for three sessions. Solved
+2026-09-16: the apex is the concave break in the channel's long profile, and
+the fixture had been damming its own canyon the whole time. 3/3, apex within
+7 m, area -4.9%. See the 2026-09-16 session notes for the three approaches that
+failed first, which are worth not repeating.
+
+---
+
+## Research findings: don't rebuild these
+
+A deliberate survey of existing open-source tooling. Several parts of this
+package duplicate mature, validated work.
+
+### Replace outright
+
+| What | Use instead | Why |
+|---|---|---|
+| `detect_headcuts` | **`topotoolbox.StreamObject.knickpointfinder`** | Implements the published Schwanghart & Scherler method. Python bindings exist and install cleanly (`pip install topotoolbox`, v3.0.1). Validated; mine is broken. |
+| 3DEP DEM download | **`py3dep`** (HyRiver) | Exactly the "point at a shapefile, get a buffered DEM" function requested. Accepts geometries and GeoDataFrames. |
+| SSURGO / soil download | **`pygeohydro`** (HyRiver) | gNATSGO, SoilGrids, derived soil properties, NLCD land cover, and WBD watershed boundaries — all by geometry. 90 stars, actively released. |
+
+Writing our own fetchers for 3DEP and SSURGO would be pure duplication. HyRiver
+already does both, by geometry, and handles the service quirks.
+
+### Strongly consider replacing
+
+**`topotoolbox`** (Python, v3.0.1) also provides `flow_accumulation`,
+`drainagebasins`, `vertdistance2stream` (which *is* HAND), `chitransform`,
+`ksn`, `streamorder`, `trunk`, `quantcarve`, `to_geodataframe`. That covers most
+of `landscape/terrain.py` and much of `landscape/network.py`, in a C library,
+faster and better tested than the pysheds path. It also brings chi analysis,
+which we do not have and which is the standard basis for knickpoint work.
+
+**Valley bottom / confinement** already exist:
+
+* [Riverscapes/riverscapes-tools](https://github.com/Riverscapes/riverscapes-tools) — open-source Python 3, includes VBET
+* [Riverscapes/ConfinementTool](https://github.com/Riverscapes/ConfinementTool) — confinement specifically
+* [EVS-GIS/python-fct](https://github.com/EVS-GIS/python-fct) — Fluvial Corridor Toolbox, Python
+
+Our valley-bottom extraction already borrows VBET's calibrated evidence weights
+(0.65 HAND / 0.35 slope, thresholds 0.65 / 0.85). Worth evaluating whether to
+depend on riverscapes-tools directly rather than maintain a parallel
+implementation.
+
+### On pytRIBS
+
+**Its license is GPL v2, not MIT.** That matters: GPL v2 is copyleft, so its code
+cannot be copied into this MIT-licensed package without relicensing the whole
+thing. Read it for ideas, do not lift code.
+
+Scope-wise it is a pre/post-processor for the tRIBS hydrologic model — TIN mesh
+generation, met forcing, model runs — not a geomorphology toolkit. Small (10
+stars, 244 commits). Its `Soil` and `Land` preprocessing classes are the only
+overlapping ideas, and HyRiver covers that ground with a permissive license.
+
+### What stays genuinely ours
+
+* **Reach-scale bank/floodplain delineation with the valley-confinement cutoff.**
+  No direct equivalent found. VBET does valley bottoms at landscape scale;
+  ConfinementTool does confinement; neither does per-section bank tops,
+  bankfull geometry and entrenchment with a valley-wall stop. Verified.
+* **The MCP server.** Nothing else exposes this analysis to Claude directly.
+* **The skill / workflow layer** — CRS hygiene, when to plot, how to tune.
+* **The two-tier framing** — same definitions at lidar and coarse scale, so the
+  coarse pass is calibratable against the fine one.
+
+---
+
+## Recommended next session
+
+1. **Swap in the libraries.** `topotoolbox` for knickpoints and (probably) flow
+   routing/HAND; `py3dep` + `pygeohydro` for the data fetchers Sam asked for.
+   This deletes more code than it adds.
+2. **Then the deployment layer.** Notebooks are the cheapest path and are
+   testable — one notebook per workflow (inspect / reach / landscape / erosion),
+   with the tuning notes inline as markdown. A QGIS Processing plugin is the
+   nicer distribution but could not be tested in the build container, so it
+   should be written only where a QGIS install is available to run it against.
+3. **Calibrate.** Confinement breaks and the channel-width relation are both
+   uncalibrated defaults. Run real data, read
+   `summary.confinement_ratio_percentiles`, set breaks from the distribution.
+4. **Rosgen crosswalk** needs surficial geology joined in. The crosswalk table is
+   `_rosgen_candidates()` in `landscape/classify.py`.
+
+## Future: machine learning (not scoped yet)
+
+The idea raised: run the workflow, verify the output by hand, feed the corrected
+samples back in, repeat. That is **active learning over human-corrected labels**,
+and it is a good fit here — but only if the plumbing exists first.
+
+What matters is that the groundwork is mostly already in place, and one piece is
+missing:
+
+* **Features exist.** Every segment and gully already carries a numeric vector:
+  `valley_width_m`, `confinement_ratio`, `gradient`, `hand_mean_m`,
+  `drainage_km2`, `mean_slope_std`, `mean_depth_m`, `width_m`. That is a design
+  matrix already — the per-segment CSV is one `pandas.read_csv` from trainable.
+* **Parameters are reported with every result.** `result["parameters"]` carries
+  the full threshold set, so a corrected sample can be tied to the exact
+  configuration that produced it. Reproducibility is the hard part of this kind
+  of loop and it is already handled.
+* **What is missing: a label store.** There is nowhere to record "this segment
+  was classified confined, a human says partly confined". That is the first
+  thing to build — a simple table keyed by segment id + run parameters, with the
+  model's answer, the human's answer, and who corrected it. Everything else
+  depends on it.
+
+Two framings worth separating before writing code, because they lead to
+different systems:
+
+1. **Learn the thresholds.** Keep the physical algorithm, fit its parameters
+   (`bank_slope`, `slope_std_min`, confinement breaks) to corrected examples.
+   Small data, interpretable, and it directly solves the calibration problem
+   that is currently manual. **This is the one to do first** — it needs tens of
+   corrections, not thousands, and the result is a better default parameter set
+   per physiographic region.
+2. **Learn the classification.** Replace the rule-based classifier with a model
+   trained on the feature vectors. More powerful, needs far more labelled data,
+   and gives up the explainability that makes the current output defensible in a
+   design report. Worth it only once (1) is exhausted.
+
+A caution worth writing down now: **corrections are not ground truth.** A
+human-drawn bank top is itself an interpretation with its own error, often
+larger than the one-sample offset the detector already has. Before training on
+corrections, measure inter-operator variability on the same reach — if two
+people disagree by more than the algorithm's error, the algorithm is not the
+thing to fix.
+
+## Smaller open items
+
+* `whitebox` backend in `landscape/terrain.py` is written but **untested** — the
+  build container's proxy blocked the binary download.
+* `pysheds` 0.5 needs a `np.in1d` shim on NumPy 2 (`_pysheds_numpy2_shim`).
+  Drop it when pysheds ships a NumPy 2 release.
+* Gully detection thresholds were set from the fixture's own percentiles. Do the
+  same on real data — read the `slope_std` raster's distribution first.
+* `merge_fragments` collinear joining is generic. `landscape/network.py` still
+  calls it in exact-endpoint mode only; passing a snap tolerance there would
+  likely reduce stream-network fragmentation the same way. Untested.

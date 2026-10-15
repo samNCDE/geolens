@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geolens"
+# Single source of truth: src/geolens/__init__.py. Carrying the version in two
+# places means shipping a build whose metadata and __version__ disagree, which
+# is what happened at 0.2.0 and is invisible until someone reports a bug against
+# the wrong version.
+dynamic = ["version"]
+description = "Valley and channel form from a lidar DEM: valley bottoms, confinement, Rosgen valley and stream types, stable or unstable form. ArcGIS Pro toolbox, notebook and QGIS plugin."
+readme = "README.md"
+# 3.9 rather than 3.10 on purpose: ArcGIS Pro 3.2 and earlier ship Python 3.9,
+# and a hard >=3.10 floor turns "I want to use my existing env" into an opaque
+# "requires a different Python" error. Nothing in the source needs 3.10 -- the
+# only PEP 604 unions are under `from __future__ import annotations`.
+# 3.11 is what is actually tested.
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["gis", "dem", "cross-section", "hydrology", "geomorphology", "mcp"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering :: GIS",
+]
+dependencies = [
+  "geopandas>=1.0",
+  "rasterio>=1.3",
+  "shapely>=2.0",
+  "pyproj>=3.4",
+  "fiona>=1.9",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "matplotlib>=3.7",
+  "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+# numba < 0.62: pysheds' depression filling uses a numba-compiled generator
+# (_sgrid.count) that numba 0.68 no longer compiles ("KeyError: int64
+# generator"); 0.61.2 is tested. A fresh install without the cap breaks the
+# landscape pass at its first step.
+# numba is imported directly by landscape/flow.py and landscape/terrain.py.
+# It used to arrive only as a transitive dependency of pysheds, which meant a
+# working install depended on someone else's dependency tree not changing.
+# Declare what we actually import.
+landscape = [
+  "pysheds>=0.4",
+  "numba>=0.57,<0.62",
+  "scikit-image>=0.21",
+  "scipy>=1.10",
+  "psutil>=5.9",
+]
+whitebox = ["whitebox>=2.3"]
+# topotoolbox is a compiled C library behind Python bindings. It is kept out of
+# the default landscape extra deliberately: it is only needed for headcuts, and
+# a compiled dependency is one more thing that can fail to install on a machine
+# where everything else works.
+# NOTE the version. The TopoToolbox *project* is at v3, but the Python
+# package on PyPI is versioned separately and is at 0.0.x -- pinning >=3.0
+# asks for a release that does not exist and fails the whole install.
+headcuts = ["topotoolbox>=0.0.10"]
+all = [
+  "mcp>=1.2",
+  "topotoolbox>=0.0.10",
+  "pysheds>=0.4",
+  "numba>=0.57,<0.62",
+  "scikit-image>=0.21",
+  "scipy>=1.10",
+  "psutil>=5.9",
+]
+
+[project.scripts]
+geolens = "geolens.cli:main"
+
+[project.entry-points."mcp.servers"]
+geolens = "geolens.mcp_server:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "geolens.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
