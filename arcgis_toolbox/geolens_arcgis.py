@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sqlite3
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -298,12 +299,14 @@ def feature_class(gpkg) -> str | None:
     return os.path.join(str(gpkg), f"main.{layers[0]}") if layers else str(gpkg)
 
 
-# Layers copied into a file geodatabase remember where their QGIS style came
-# from, and which of them carry their plots as attachments (their default
-# pop-up then shows the plot, so no custom pop-up is set).
-_QML_FOR: dict = {}
-_ATTACHED: set = set()
+# Everything postExecute needs is read back from disk, not kept in this
+# module: the .pyt reloads it on import, so anything remembered between
+# execute and postExecute could be gone by the time the layers are styled.
+# A feature class copied into geolens.gdb keeps its QGIS style beside the
+# geodatabase (_styles/<name>.qml), and has attachments when ArcGIS made
+# its <name>__ATTACH table.
 GDB_NAME = "geolens.gdb"
+STYLES_DIR = "_styles"
 
 
 def _gdb_folder(params: dict) -> str | None:
@@ -335,8 +338,14 @@ def attach_plots(fc: str) -> int:
         arcpy.management.EnableAttachments(fc)
         oid = arcpy.Describe(fc).OIDFieldName
         arcpy.management.AddAttachments(fc, oid, fc, oid, "plot_path")
-        _ATTACHED.add(_norm(fc))
     return n
+
+
+def has_attachments(fc: str) -> bool:
+    try:
+        return bool(arcpy.Exists(f"{fc}__ATTACH"))
+    except Exception:                                        # noqa: BLE001
+        return False
 
 
 def to_gdb(gpkg, folder: str) -> str | None:
@@ -355,7 +364,9 @@ def to_gdb(gpkg, folder: str) -> str | None:
     arcpy.management.CopyFeatures(src, dst)
     qml = Path(str(gpkg)).with_suffix(".qml")
     if qml.exists():
-        _QML_FOR[_norm(dst)] = str(qml)
+        styles = Path(folder) / STYLES_DIR
+        styles.mkdir(exist_ok=True)
+        shutil.copyfile(qml, styles / f"{name}.qml")
     if "plot_path" in _field_names_of(dst):
         n = attach_plots(dst)
         arcpy.AddMessage(f"{name}: {n} plot(s) attached in {GDB_NAME}")
@@ -499,6 +510,19 @@ def qml_categories(qml: Path):
     return rend.get("attr"), values, labels, other
 
 
+def qml_for(source: str) -> Path:
+    """The QGIS style geolens wrote for a layer's data: beside its
+    GeoPackage, or, for a copy in geolens.gdb, in _styles beside that."""
+    src = str(source)
+    low = src.lower()
+    if ".gpkg" in low:
+        return Path(src[: low.index(".gpkg") + 5]).with_suffix(".qml")
+    if ".gdb" in low:
+        gdb = Path(src[: low.index(".gdb") + 4])
+        return gdb.parent / STYLES_DIR / f"{Path(src).name}.qml"
+    return Path(src).with_suffix(".qml")
+
+
 def _dataset_key(source: str) -> tuple[str, Path | None]:
     src = str(source)
     low = src.lower()
@@ -572,8 +596,7 @@ def style_layer(lyr) -> None:
     lyr.name = spec["name"] + (f" ({prefix})" if prefix else "")
     width = spec.get("width")
     alpha = spec.get("alpha", 100)
-    qml = (gpkg.with_suffix(".qml") if gpkg is not None
-           else Path(_QML_FOR.get(_norm(lyr.dataSource), "") or "nonexistent.qml"))
+    qml = qml_for(lyr.dataSource)
     try:
         if spec.get("qml") and qml.exists():
             got = qml_categories(qml)
@@ -591,7 +614,7 @@ def style_layer(lyr) -> None:
         pass
     # A layer whose plots are attachments keeps ArcGIS's default pop-up,
     # which shows them; one without gets an image pop-up on plot_path.
-    if "plot_path" in _field_names(lyr) and _norm(lyr.dataSource) not in _ATTACHED:
+    if "plot_path" in _field_names(lyr) and not has_attachments(lyr.dataSource):
         try:
             _image_popup(lyr, spec["name"])
         except Exception:                                    # noqa: BLE001

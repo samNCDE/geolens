@@ -3,19 +3,19 @@
 **Start with [OVERVIEW.md](OVERVIEW.md)** — what the tool does, how to run it,
 and what to trust. This file is the working log behind it.
 
-## Pick up here (state at the end of the 15 Oct 2026 session)
+## Pick up here (state at the end of the 16 Oct 2026 session)
 
-**State.** v0.30.1 beta. The full test suite passes on Linux with numba
-0.61.2. The release zip (`geolens_v0.30.1-beta.zip`) and a git bundle
-(`geolens_v0.30.1.bundle`, ready to push) are in Sam's Claude outputs
-folder.
+**State.** v0.31.0 beta. The full test suite passes on Linux with numba
+0.61.2. The release zip (`geolens_v0.31.0-beta.zip`) and a git bundle
+(`geolens_v0.31.0.bundle`, holding v0.30.0 to v0.31.0, ready to push) are
+in Sam's Claude outputs folder.
 
 **Not yet done:**
 - **Not pushed to GitHub.** This session's GitHub access was not enabled
   for the repo. To push, create an empty `samNCDE/geolens` repo, then run:
 
   ```
-  git clone -b main geolens_v0.30.1.bundle geolens
+  git clone -b main geolens_v0.31.0.bundle geolens
   cd geolens
   git remote set-url origin https://github.com/samNCDE/geolens.git
   git push -u origin main
@@ -27,19 +27,19 @@ folder.
   arcpy only. Run every tool once on a small area; the 30-minute pass is in
   `docs/ARCGIS_TEST_CHECKLIST.md`. Watch especially:
   - the geodatabase attachments and pop-ups;
-  - Fetch a DEM and NAIP (live services);
+  - Fetch a DEM, NAIP and Sentinel-1 (live services);
   - 1b. Calibrate.
 - Fetchers are untested against the live services (they are tested offline
-  with stubs).
+  with stubs). Sentinel-1 is the newest, and the most likely to need a fix
+  on first contact with NASA's servers (login redirect, URL patterns).
 
 **Next, in order:**
 1. Sam's first real runs in ArcGIS Pro, and fixing what they turn up.
-2. SAR: read [docs/SAR_FEASIBILITY.md](docs/SAR_FEASIBILITY.md). It cannot
-   be streamed anonymously the way NAIP is. NASA's OPERA RTC-S1 (30 m,
-   free) can be looked at in ArcGIS Pro today as an image service. The
-   one-hour experiment there decides whether it is worth building.
-   Building needs Sam's choice: a free Earthdata login, or a Planetary
-   Computer account.
+2. SAR: the experiment in [docs/SAR_FEASIBILITY.md](docs/SAR_FEASIBILITY.md)
+   with the new *Sentinel-1 radar statistics* tool. Sam has an Earthdata
+   login; he saves it with *Save Earthdata login* (never in code). If
+   riparian and field polygons separate on `sar_vh_cv`, build the
+   "field-like" flag on the riparian band.
 3. Rosgen's new valley-type names (waiting on Sam's table).
 4. Validation against surveyed bankfull.
 
@@ -50,6 +50,43 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.31.0 (beta): Sentinel-1 radar statistics; styling that survives a reload
+
+- **Sentinel-1 radar statistics** (`sar.py`, `api.sentinel1_stats`, toolbox
+  *0 Get data ▸ Sentinel-1 radar statistics (OPERA RTC)*). NASA's OPERA
+  RTC-S1 is found in CMR (collection `C2777436413-ASF`, no login). Each
+  burst's VV, VH and mask are read onto the area's 30 m UTM grid. The tool
+  writes:
+  - a tile per pass, reused on a rerun;
+  - per-track statistics (median VH and VV in dB, VH/VV, CV of VH, passes),
+    then combined;
+  - optionally, the statistics per polygon.
+
+  Reading streams through GDAL with the login and a cookie jar, and falls
+  back to whole-file downloads with Python's HTTPS when GDAL cannot get
+  through, as NAIP does. Tested offline only.
+- **Save Earthdata login** (*0 Setup*). Sam asked to hardcode his login.
+  It is not hardcoded: geolens goes to GitHub and to coworkers, so the
+  password would be in every copy and in git history. Each person saves
+  their own into `%USERPROFILE%\_netrc`. The toolbox writes the file in
+  ArcGIS's own Python (`geolens_runner.save_earthdata_login`), so the
+  password never passes through the geolens subprocess, its run records or
+  its messages. A test checks that. `geolens.sar.save_login` does the same
+  for notebooks, and a test keeps the two writers in step.
+- **Styling no longer depends on memory between execute and postExecute.**
+  The .pyt reloads `geolens_arcgis` when Pro imports it, which would have
+  wiped two dictionaries (which QML styled which gdb layer, and which layers
+  had attachments) before postExecute read them. The colours from the QML
+  and the attachment pop-ups would then both have been lost silently. Both
+  are now read from disk: `_styles/<name>.qml` beside `geolens.gdb`, and
+  ArcGIS's `<name>__ATTACH` table. The toolbox tests now reload the module
+  between execute and postExecute, as Pro may.
+- **Every `ga.run(...)` call is checked against the API.** A test checks
+  that the function exists and takes the keyword arguments the tool passes,
+  so a typo cannot wait for a run in Pro to show.
+- **START_HERE.html** rendered its nested lists as plain text with dashes.
+  It is now regenerated with them indented the way Python-Markdown needs.
 
 ## v0.30.1 (beta): editable association table, numba guard, SAR note
 

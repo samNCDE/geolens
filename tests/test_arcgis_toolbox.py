@@ -65,6 +65,10 @@ def _execute(tbx, tool, params):
     errors = [(p.name, p.message) for p in params if p.hasError()]
     assert not errors, errors
     tool.execute(params, None)
+    # The .pyt reloads geolens_arcgis whenever Pro imports it, which can
+    # happen between execute and postExecute: postExecute must not depend on
+    # anything execute kept in memory.
+    importlib.reload(sys.modules["geolens_arcgis"])
     # What Pro does next: add each derived output to the map, then call
     # postExecute.
     for p in params:
@@ -416,3 +420,67 @@ def test_calibrate_confinement_tool(tbx, tmp_path):
     layers = _execute(tbx, tool, params)
     assert "Reaches (confinement)" in layers
     assert (run / "reclassified_dir" / "segments_classified.gpkg").exists()
+
+
+def test_every_geolens_call_matches_the_api():
+    """Each ga.run("<function>", {...}) names an api function, with keyword
+    arguments it takes. The tools run geolens in another process, so a typo
+    here would only show up as a failed run in ArcGIS Pro."""
+    import ast
+    import inspect
+
+    from geolens import api
+
+    tree = ast.parse((TBX / "geolens.pyt").read_text())
+    calls = 0
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "run"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "ga"
+                and node.args and isinstance(node.args[0], ast.Constant)):
+            continue
+        fn = getattr(api, node.args[0].value, None)
+        assert callable(fn), node.args[0].value
+        if len(node.args) < 2 or not isinstance(node.args[1], ast.Dict):
+            continue
+        sig = inspect.signature(inspect.unwrap(fn))
+        if any(p.kind is p.VAR_KEYWORD for p in sig.parameters.values()):
+            continue
+        keys = {k.value for k in node.args[1].keys
+                if isinstance(k, ast.Constant)}
+        unknown = keys - set(sig.parameters)
+        assert not unknown, (node.args[0].value, sorted(unknown))
+        calls += 1
+    assert calls >= 15
+
+
+def test_save_earthdata_login_tool(tbx, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    tool, params, v = _tool(tbx, "SaveEarthdataLogin", username="sam_ncde",
+                            password="Xy7-secret")
+    assert v["password"].datatype == "GPEncryptedString"
+    _execute(tbx, tool, params)
+    netrc = Path(v["saved"].value)
+    assert netrc.parent == tmp_path
+    assert "machine urs.earthdata.nasa.gov login sam_ncde password Xy7-secret" \
+        in netrc.read_text()
+    # The password is never echoed into the geoprocessing messages.
+    assert not any("Xy7-secret" in str(m) for m in _log(tbx, "message"))
+    assert not any("Xy7-secret" in str(e) for e in tbx[1].LOG)
+
+
+def test_sentinel1_tool_parameters(tbx):
+    """It fetches from NASA with a login, so its runs are tested at the API
+    level (test_sar) with the services stood in for."""
+    tool, params, v = _tool(tbx, "Sentinel1Radar")
+    assert {"aoi_raster", "aoi_polygon", "out_folder", "start", "end",
+            "polygons", "min_passes", "out_stats", "out_zonal"} <= set(v)
+    assert v["out_stats"].datatype == "DERasterDataset"
+    assert v["min_passes"].value == 8
+    tool, params, v = _tool(tbx, "Sentinel1Radar", aoi_raster=str(DEM),
+                            aoi_polygon=str(DEM))
+    tool.updateMessages(params)
+    assert v["aoi_polygon"].hasError()

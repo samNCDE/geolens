@@ -186,6 +186,8 @@ class management:
     @staticmethod
     def EnableAttachments(fc):
         LOG.append(("EnableAttachments", str(fc)))
+        # ArcGIS makes <fc>__ATTACH; the stand-in gdb gets a file for it.
+        open(_split_fc(f"{fc}__ATTACH")[0], "a").close()
 
     @staticmethod
     def AddAttachments(fc, join, match, match_join, path_field, *rest):

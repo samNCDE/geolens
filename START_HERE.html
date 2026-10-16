@@ -146,30 +146,32 @@ two disagree, look. <code>bankfull_method="picker"</code> brings the old behavio
 <ol>
 <li>Unzip the folder somewhere permanent, e.g. <code>Documents\Tools\geolens</code>.</li>
 <li>Double-click <strong><code>install_windows.bat</code></strong>. The first time takes 5–15 minutes,
-   mostly downloading. It builds its own Python environment, tests itself on
-   a synthetic valley with a known channel, and prints the command that
-   starts the notebook.</li>
+    mostly downloading. It builds its own Python environment, tests itself on
+    a synthetic valley with a known channel, and prints the command that
+    starts the notebook.</li>
 <li><strong>Updating:</strong> unzip the new version anywhere and run its installer. It
-   finds the existing install, updates the code in place, and leaves the
-   environment alone.</li>
+    finds the existing install, updates the code in place, and leaves the
+    environment alone.</li>
 </ol>
 <p><a href="INSTALL.md">INSTALL.md</a> covers the manual route and what to do when the
 install fails.</p>
 <h2>Run it</h2>
 <ol>
 <li>Start Jupyter with the command the installer printed, then open
-   <strong><code>notebooks/geolens_start.ipynb</code></strong>.</li>
-<li><strong>Edit the one cell in step 1:</strong>
-   - <code>DEM</code>: your DEM. Lidar at 0.5–2 m is what the stream types need.
-   - <code>OUT_DIR</code>: must be <em>outside</em> your data folders; geolens refuses to write
-     inside them.
-   - <code>GEOLOGY = "auto"</code>: downloads USGS surficial geology.
-   - <code>REGIONAL_CURVE = "arid_sw_nm"</code>: Moody et al. 2003, eastern Arizona /
-     New Mexico. Use <code>"arid_sw_az"</code> for central and southern Arizona.</li>
+    <strong><code>notebooks/geolens_start.ipynb</code></strong>.</li>
+<li><strong>Edit the one cell in step 1:</strong><ul>
+<li><code>DEM</code>: your DEM. Lidar at 0.5–2 m is what the stream types need.</li>
+<li><code>OUT_DIR</code>: must be <em>outside</em> your data folders; geolens refuses to write
+  inside them.</li>
+<li><code>GEOLOGY = "auto"</code>: downloads USGS surficial geology.</li>
+<li><code>REGIONAL_CURVE = "arid_sw_nm"</code>: Moody et al. 2003, eastern Arizona /
+  New Mexico. Use <code>"arid_sw_az"</code> for central and southern Arizona.</li>
+</ul>
+</li>
 <li>Run the cells top to bottom. Step 2 estimates memory before anything
-   expensive runs. If the DEM will not fit, step 3 coarsens it for you.</li>
+    expensive runs. If the DEM will not fit, step 3 coarsens it for you.</li>
 <li><strong>Step 6: calibrate the confinement breaks.</strong> It takes seconds and nothing
-   is rerun.</li>
+    is rerun.</li>
 </ol>
 <p><strong>What to expect.</strong> On a 128 GB workstation:</p>
 <ul>
@@ -190,15 +192,15 @@ installed into ArcGIS Pro's Python and a DEM too big for memory cannot crash
 ArcGIS.</p>
 <ol>
 <li><strong>Add the toolbox once:</strong> in the Catalog pane, right-click <em>Toolboxes ▸
-   Add Toolbox</em> and choose <code>arcgis_toolbox\geolens.pyt</code> in the geolens
-   folder.</li>
+    Add Toolbox</em> and choose <code>arcgis_toolbox\geolens.pyt</code> in the geolens
+    folder.</li>
 <li><strong>Check it:</strong> run <em>0 Setup ▸ Find the geolens environment</em>. It should
-   report "geolens 0.30.1 found". If it can't find the environment, give it
-   the environment's <code>python.exe</code>, which the installer prints. The tool
-   remembers it.</li>
-<li><strong>Run the whole routine</strong> (<em>1 Whole routine</em>), or <strong>one step at a time</strong>
-   (<em>2 Steps</em>):</li>
-</ol>
+    report "geolens 0.31.0 found". If it can't find the environment, give it
+    the environment's <code>python.exe</code>, which the installer prints. The tool
+    remembers it.</li>
+<li>
+<p><strong>Run the whole routine</strong> (<em>1 Whole routine</em>), or <strong>one step at a time</strong>
+    (<em>2 Steps</em>):</p>
 <table>
 <thead>
 <tr>
@@ -237,45 +239,60 @@ ArcGIS.</p>
 </tr>
 </tbody>
 </table>
-<p><em>3 More tools</em> has:
-   - the alluvial fan search on any DEM (it can re-type a run's valleys with
-     the fans it finds)
-   - clipping a DEM to one watershed
-   - headcuts (knickpoints)
-   - section plots for an earlier run
-   - cross-sections along a centerline</p>
+<p><em>3 More tools</em> has:</p>
+<ul>
+<li>the alluvial fan search on any DEM (it can re-type a run's valleys with
+  the fans it finds)</li>
+<li>clipping a DEM to one watershed</li>
+<li>headcuts (knickpoints)</li>
+<li>section plots for an earlier run</li>
+<li>cross-sections along a centerline</li>
+</ul>
 <p><em>0 Setup</em> has the memory check, and <em>Coarsen a DEM</em> for a DEM that won't
-   fit (below).</p>
-<p><em>0 Get data</em> has:
-   - <strong>Fetch a DEM (USGS 3DEP):</strong> point it at a polygon. It uses 1 m lidar
-     where a project covers the area and the 1/3 arc-second DEM (about 10 m)
-     where none does, and says how much of each. Tiles go to <code>dem_tiles</code> and
-     the mosaic to <code>dem_mosaic.tif</code>, in the folder you choose. The output is
-     in the lidar's UTM zone unless you pick a coordinate system; on a foot
-     coordinate system the elevations are converted to feet as well.
-   - <strong>NAIP imagery and NDVI:</strong> an NDVI tile and an imagery tile for each
-     scene, plus an NDVI mosaic and a true-colour mosaic, all in the folder
-     you choose. Newest imagery goes on top. A folder that already has the
-     tiles is reused. Step 6 does the same into a NAIP folder of your
-     choice before mapping the riparian band.</p>
+fit (below).</p>
+<p><em>0 Get data</em> has:</p>
+<ul>
+<li><strong>Fetch a DEM (USGS 3DEP):</strong> point it at a polygon. It uses 1 m lidar
+  where a project covers the area and the 1/3 arc-second DEM (about 10 m)
+  where none does, and says how much of each. Tiles go to <code>dem_tiles</code> and
+  the mosaic to <code>dem_mosaic.tif</code>, in the folder you choose. The output is
+  in the lidar's UTM zone unless you pick a coordinate system; on a foot
+  coordinate system the elevations are converted to feet as well.</li>
+<li><strong>NAIP imagery and NDVI:</strong> an NDVI tile and an imagery tile for each
+  scene, plus an NDVI mosaic and a true-colour mosaic, all in the folder
+  you choose. Newest imagery goes on top. A folder that already has the
+  tiles is reused. Step 6 does the same into a NAIP folder of your
+  choice before mapping the riparian band.</li>
+<li><strong>Sentinel-1 radar statistics (OPERA RTC):</strong> 30 m radar over the area
+  for a period (default the last year): how strong and how steady the
+  backscatter is. It is for telling cottonwoods from hay fields, which
+  NDVI cannot. Give it polygons, such as the riparian band, to get the
+  numbers per polygon. It needs your own free NASA Earthdata login,
+  saved once with <em>0 Setup ▸ Save Earthdata login</em>. New and not yet
+  tried against NASA's servers.</li>
+</ul>
 <p><strong>Clip to one watershed:</strong> the whole routine and step 1 can clip the DEM
-   to one complete watershed first. Give it a pour point layer (its first
-   point, snapped to the largest drainage nearby), a boundary polygon, or a
-   HUC12 code.</p>
-<p><strong>A DEM too big for memory:</strong>
-   1. Run <em>Coarsen a DEM</em>. With the cell size left at 0 it uses the size the
-      memory check suggests.
-   2. Run the routine on the coarse copy, with the full lidar as the <em>fine
-      DEM</em>. Valleys and routing don't need lidar; the channel sections do,
-      and they read the fine DEM.</p>
+to one complete watershed first. Give it a pour point layer (its first
+point, snapped to the largest drainage nearby), a boundary polygon, or a
+HUC12 code.</p>
+<p><strong>A DEM too big for memory:</strong></p>
+<ol>
+<li>Run <em>Coarsen a DEM</em>. With the cell size left at 0 it uses the size the
+  memory check suggests.</li>
+<li>Run the routine on the coarse copy, with the full lidar as the <em>fine
+  DEM</em>. Valleys and routing don't need lidar; the channel sections do,
+  and they read the fine DEM.</li>
+</ol>
 <p>There is deliberately no tool for running the routine in tiles: splitting
-   flow routing across tiles cut 97% of the stream network on the test
-   landscape.
+flow routing across tiles cut 97% of the stream network on the test
+landscape.
 4. <strong>Always set the output folder.</strong> For steps 2–4, the <em>run folder</em> is the
-   output folder of step 1 or of the whole routine. Redoing a step replaces
-   that step's layers in the run folder; nothing earlier is rerun.
+output folder of step 1 or of the whole routine. Redoing a step replaces
+that step's layers in the run folder; nothing earlier is rerun.
 5. Progress shows in the geoprocessing pane and <em>Cancel</em> stops the run.
-   geolens's warnings appear as tool warnings.</p>
+geolens's warnings appear as tool warnings.</p>
+</li>
+</ol>
 <p>The layers are added to the map already coloured.</p>
 <p><strong>Plots are geodatabase attachments.</strong> By default each tool copies its layers
 into <code>geolens.gdb</code> in the run folder and attaches every feature's plot. Click
@@ -311,17 +328,17 @@ ArcGIS toolbox first.</p>
 add yourself, set it up once and save it as a layer file:</p>
 <ol>
 <li>Add <code>stream_type_sections.gpkg</code>. In the Add Data dialog, pick the layer
-   <code>main.stream_type_sections</code>.</li>
+    <code>main.stream_type_sections</code>.</li>
 <li>In the Contents pane, right-click the layer ▸ <strong>Configure Pop-ups</strong>.</li>
 <li>At the top of the pane, click <strong>Image</strong>. Edit the new Image element and set
-   <strong>Source URL</strong> to <code>{plot_path}</code>. To open the full-size plot on click, set
-   <strong>Link URL</strong> to <code>{plot_path}</code> as well. A title such as
-   <code>xs {xs_id} - {status}</code> helps.</li>
+    <strong>Source URL</strong> to <code>{plot_path}</code>. To open the full-size plot on click, set
+    <strong>Link URL</strong> to <code>{plot_path}</code> as well. A title such as
+    <code>xs {xs_id} - {status}</code> helps.</li>
 <li>Drag the Image element above the Fields element and close the pane.</li>
 <li>Click a section with the <strong>Explore</strong> tool. The pop-up shows its plot;
-   resize the pop-up window to enlarge it.</li>
+    resize the pop-up window to enlarge it.</li>
 <li>Right-click the layer ▸ <strong>Sharing ▸ Save As Layer File</strong> to keep the
-   setup. Do the same for <code>stream_types.gpkg</code> to get the reach sheets.</li>
+    setup. Do the same for <code>stream_types.gpkg</code> to get the reach sheets.</li>
 </ol>
 <p>The paths in <code>plot_path</code> are full local paths. Esri documents that pop-up
 images can come from local paths, but not UNC or relative paths, so the

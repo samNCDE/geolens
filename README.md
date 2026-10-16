@@ -6,7 +6,7 @@ types, and judges whether each reach's stream type is a **stable or unstable
 form for its valley**. Every channel section it measures comes with a plot you
 can click on the map.
 
-*Beta (v0.30). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
+*Beta (v0.31). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
 or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 
 ---
@@ -20,7 +20,7 @@ or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 | 3. Valley form, alluvial fans, valley types | Sections from floor to divide (width, side slopes, shape), a fan search, and USGS surficial geology give **Rosgen valley types I–XI** and the valley as an area. |
 | 4. Stream types | Five channel sections per reach on the lidar: bankfull at the regional curve's depth (Moody et al. 2003 for AZ/NM), width/depth, entrenchment, slope and sinuosity give a **Rosgen stream type A–G**, with a plot of every section. |
 | 5. Stable or unstable form | Each reach's stream type against its valley type (NRCS NEH 654 TS3E, after Rosgen 1996): **stable**, **unstable**, **check** or **unknown**. |
-| More | Gullies and headcuts, riparian band from NAIP NDVI, cross-sections along any centerline, watershed clipping, and fetching 3DEP DEMs and NAIP imagery. |
+| More | Gullies and headcuts, riparian band from NAIP NDVI, cross-sections along any centerline, watershed clipping, fetching 3DEP DEMs and NAIP imagery, and Sentinel-1 radar statistics (to tell riparian woodland from irrigated fields). |
 
 ## How much to trust it
 
@@ -31,6 +31,7 @@ or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 | Stable / unstable | **As good as the two types it compares.** A *check* is a stream type Rosgen does not list for that valley: a real departure, or a wrong type. |
 | Alluvial fans | **New; checked on synthetic fans only.** Only cone-shaped regions count; every candidate is kept for review. |
 | Gullies, headcuts | **Experimental.** |
+| Sentinel-1 radar statistics | **New; tested offline only.** For an experiment, not yet a classification. |
 
 The reasons, with the numbers behind them, are in [START_HERE.md](START_HERE.md).
 
@@ -58,9 +59,10 @@ ArcGIS. Manual installs and troubleshooting are in [INSTALL.md](INSTALL.md).
 **ArcGIS Pro toolbox** (recommended):
 
 - **0 Get data**: fetch a USGS 3DEP DEM (1 m lidar where it exists), NAIP
-  imagery and NDVI. Tiles and mosaics go to a folder you choose.
-- **0 Setup**: find the environment, check memory before a run, and coarsen a
-  DEM that won't fit.
+  imagery and NDVI, and Sentinel-1 radar statistics. Tiles and mosaics go to
+  a folder you choose.
+- **0 Setup**: find the environment, check memory before a run, coarsen a
+  DEM that won't fit, and save your own NASA Earthdata login (for radar).
 - **1 Whole routine**: every step in one tool, optionally clipped to one
   watershed first.
 - **2 Steps**: the same steps one at a time. Step 1 does the routing once;
@@ -92,8 +94,10 @@ See [RUNNING.md](RUNNING.md).
   with the routing cached.
 - **Units:** DEMs in US survey feet are handled. Parameters are in metres and
   converted.
-- **Internet** is needed for geology, NAIP and DEM downloads. Everything else
-  runs offline.
+- **Internet** is needed for geology, NAIP, DEM and radar downloads.
+  Everything else runs offline. Radar also needs a free NASA Earthdata
+  login, which each person saves for themselves (*0 Setup ▸ Save Earthdata
+  login*). Never put a login in shared code.
 - **Not validated against field data.** Treat stream types and stability as
   screening, and look at the plots.
 
@@ -107,7 +111,7 @@ See [RUNNING.md](RUNNING.md).
 | `docs/geolens_technical_summary_v0.28.pdf` | Methods and references. |
 | [docs/ARCGIS_TEST_CHECKLIST.md](docs/ARCGIS_TEST_CHECKLIST.md) | A 30-minute first run of every toolbox tool, and what to report. |
 | [NEXT.md](NEXT.md) | Working log: what changed in each version, known weaknesses, what is next. |
-| [docs/SAR_FEASIBILITY.md](docs/SAR_FEASIBILITY.md) | Whether Sentinel-1 radar could separate riparian woodland from irrigated fields. Not built. |
+| [docs/SAR_FEASIBILITY.md](docs/SAR_FEASIBILITY.md) | Whether Sentinel-1 radar separates riparian woodland from irrigated fields, and the experiment that decides it. |
 
 ## Development
 
@@ -131,4 +135,5 @@ MIT licence (see [LICENSE](LICENSE)). Methods and data:
 - Valley–stream associations: NRCS National Engineering Handbook 654,
   Technical Supplement 3E.
 - Data services: USGS 3DEP and The National Map, USGS surficial geology,
-  NAIP on the Microsoft Planetary Computer.
+  NAIP on the Microsoft Planetary Computer, and OPERA RTC-S1 (NASA JPL,
+  distributed by ASF; contains modified Copernicus Sentinel data).

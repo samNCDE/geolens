@@ -118,7 +118,7 @@ ArcGIS.
    Add Toolbox* and choose `arcgis_toolbox\geolens.pyt` in the geolens
    folder.
 2. **Check it:** run *0 Setup ▸ Find the geolens environment*. It should
-   report "geolens 0.30.1 found". If it can't find the environment, give it
+   report "geolens 0.31.0 found". If it can't find the environment, give it
    the environment's `python.exe`, which the installer prints. The tool
    remembers it.
 3. **Run the whole routine** (*1 Whole routine*), or **one step at a time**
@@ -157,6 +157,13 @@ ArcGIS.
      you choose. Newest imagery goes on top. A folder that already has the
      tiles is reused. Step 6 does the same into a NAIP folder of your
      choice before mapping the riparian band.
+   - **Sentinel-1 radar statistics (OPERA RTC):** 30 m radar over the area
+     for a period (default the last year): how strong and how steady the
+     backscatter is. It is for telling cottonwoods from hay fields, which
+     NDVI cannot. Give it polygons, such as the riparian band, to get the
+     numbers per polygon. It needs your own free NASA Earthdata login,
+     saved once with *0 Setup ▸ Save Earthdata login*. New and not yet
+     tried against NASA's servers.
 
    **Clip to one watershed:** the whole routine and step 1 can clip the DEM
    to one complete watershed first. Give it a pour point layer (its first

@@ -1,7 +1,8 @@
 # Sentinel-1 SAR in geolens: what is possible
 
-*Written 15 Oct 2026. Nothing here is built yet. One decision is needed from
-Sam (at the end).*
+*Written 15 Oct 2026; updated 16 Oct for v0.31.0, which builds the
+statistics the experiment below needs (Sam has an Earthdata login). Whether
+radar earns a place in the riparian band is still the experiment's call.*
 
 ## The question
 
@@ -58,33 +59,54 @@ widens the riparian band.
 - Sentinel-1B was lost in December 2021, so 2022–2024 has a 12-day repeat
   per track; Sentinel-1C (launched December 2024) restores 6 days.
 
-## Proposed experiment (about an hour)
+## The experiment (about an hour, with v0.31)
 
-1. In ArcGIS Pro, add the two image services above to a map of a valley with
-   both cottonwoods and hay fields, e.g. the Rio Ruidoso/Hondo below
-   Ruidoso Downs, over the NAIP riparian band.
-2. Digitise about 20 riparian polygons and about 20 irrigated fields.
-3. Sample a year of VH and VV for each (*Get Samples*, or a short script).
-   Compute three numbers per polygon: median VH, median VH/VV, and VH's
-   coefficient of variation through the year.
-4. **Decide:** if the two classes separate on CV(VH) or VH/VV with little
-   overlap, build `sar_tiles` on the existing tile and mosaic code
-   (`mosaic.py`, as for NAIP) and add a "field-like" flag to the riparian
-   band. If they overlap, stop: the answer is no, for an hour's work.
+1. Pick a valley with both cottonwoods and hay fields, e.g. the Rio
+   Ruidoso/Hondo below Ruidoso Downs. Map its riparian band (step 6).
+2. Digitise about 20 irrigated fields into a polygon layer, and merge it
+   with about 20 riparian polygons from the band. Add a `kind` field:
+   riparian or field.
+3. Run *0 Get data ▸ Sentinel-1 radar statistics (OPERA RTC)* over the
+   valley for a year, with those polygons. (First, once: *0 Setup ▸ Save
+   Earthdata login*.)
+4. In *Radar statistics per polygon*, compare the two kinds on `sar_vh_cv`
+   (how much VH varies) and `sar_vh_vv_db`. A scatter chart of the two,
+   coloured by `kind`, shows it at a glance.
+5. **Decide:**
+   - If the kinds separate with little overlap, the next build is a
+     "field-like" flag on the riparian band, with the threshold read off
+     this chart.
+   - If they overlap, stop: radar does not help here, and it cost an hour.
 
-## Decision needed from Sam
+The NASA image services above remain a no-login way to look at single
+dates.
 
-Building `sar_tiles` needs one of these for geolens to download OPERA
-granules:
+## How it is built (v0.31.0)
 
-- a free NASA Earthdata login (recommended; the token goes in
-  `~/.netrc`, never in the code), or
-- a Planetary Computer account, for `sentinel-1-rtc` at 10 m.
-
-The quick look in step 1 needs neither.
+- **Login.** Each person saves their own free login once (*0 Setup ▸ Save
+  Earthdata login*, or `geolens.sar.save_login`). It goes into the netrc
+  file in their Windows profile (`%USERPROFILE%\_netrc`), which NASA's
+  tools, curl and GDAL read. It is never in geolens, its run records, or a
+  shared file.
+- **Finding passes.** NASA's CMR catalog for collection `C2777436413-ASF`
+  (OPERA_L2_RTC-S1_V1), with no login needed. A burst processed twice is
+  kept in its newest version only.
+- **Reading.** Each burst's VV, VH and mask are read onto the area's 30 m
+  UTM grid through GDAL. If GDAL cannot get through (a TLS-inspecting
+  proxy), the files are downloaded whole with Python's HTTPS, as for NAIP.
+- **Tiles.** Pixels in shadow or layover, or flagged invalid in OPERA's
+  mask, are dropped. One VV/VH tile is written per pass, and reused on a
+  rerun.
+- **Statistics.** Computed per track, then combined, weighted by passes.
+  Optionally summarised per polygon.
+- **Tested offline only,** against stand-in bursts (`tests/test_sar.py`).
+  The URL patterns and the login flow follow ASF's and NASA's
+  documentation but have not met the real servers yet.
 
 ## Sources
 
 - [OPERA RTC-S1 validated product (data.nasa.gov)](https://data.nasa.gov/dataset/opera-radiometric-terrain-corrected-sar-backscatter-from-sentinel-1-validated-product-vers-f3131)
 - [OPERA L2 RTC-S1 VH image service (NASA Earthdata GIS)](https://gis.earthdata.nasa.gov/image/rest/services/OPERA_L2_RTC_S1_V1/OPERA_L2_RTC_S1_V1_VH/ImageServer)
-- Planetary Computer STAC collection `sentinel-1-rtc` (`msft:requires_account: true`), checked earlier in this session.
+- Planetary Computer STAC collection `sentinel-1-rtc` (`msft:requires_account: true`), checked 15 Oct 2026.
+- [OPERA RTC for Sentinel-1 (RTC-S1) Product Guide (ASF)](https://hyp3-docs.asf.alaska.edu/guides/opera_rtc_product_guide/): file naming, layers, mask values.
+- [OPERA RTC-S1 on the Registry of Open Data on AWS](https://registry.opendata.aws/nasa-operal2rtc-s1v1/)

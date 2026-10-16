@@ -929,6 +929,59 @@ the catalog search, or a specific scene — with the whole error, not the first
 **Not yet tested against the live service from here** — the sandbox this was
 written in cannot reach the Planetary Computer.
 
+### Radar — Sentinel-1 statistics (v0.31)
+
+What it is for: telling riparian woodland from irrigated fields, which NDVI
+cannot (both are green in June). [docs/SAR_FEASIBILITY.md](docs/SAR_FEASIBILITY.md)
+has the reasoning and the experiment.
+
+**Once per person:** a free NASA Earthdata login
+(<https://urs.earthdata.nasa.gov>), saved with the toolbox's *0 Setup ▸ Save
+Earthdata login*, or in Python:
+
+```python
+import getpass
+from geolens import sar
+sar.save_login("your_username", getpass.getpass())   # into ~/_netrc, not geolens
+```
+
+It goes in your own netrc file (`%USERPROFILE%\_netrc` on Windows), where
+NASA's tools, curl and GDAL look. It is never written into geolens, its run
+records or its logs. Do not put a login in shared code: each person uses
+their own.
+
+```python
+s = api.sentinel1_stats(DEM, start="2024-01-01", end="2024-12-31",
+                        polygons="riparian_dir/riparian.gpkg")
+print(s["stats"])         # sar_stats.tif
+print(s["zonal"])         # sar_zonal.gpkg: the same numbers per polygon
+```
+
+The data is NASA's OPERA RTC-S1: Sentinel-1, terrain-corrected to
+gamma-naught, 30 m, from 2016. Passes are found in NASA's catalog (CMR, no
+login) and read through GDAL with the login. Behind a proxy GDAL cannot get
+through, the files are downloaded whole with Python's HTTPS instead, as for
+NAIP. In the output folder:
+
+| File | |
+|---|---|
+| `sar_tiles/T<track>/<date>_T<track>.tif` | VV and VH (linear) per pass on the area's 30 m UTM grid; shadow, layover and fill are NaN. Reused on a rerun. |
+| `sar_stats_T<track>.tif` | one track's statistics |
+| `sar_stats.tif` | all tracks, each weighted by its passes |
+| `sar_zonal.gpkg` | `sar_vh_db`, `sar_vv_db`, `sar_vh_vv_db`, `sar_vh_cv`, `sar_cells` per polygon (every cell a polygon touches) |
+| `sar_sources.json` | every burst used, by track and date |
+
+The bands are `vh_db` (median VH, dB), `vv_db` (median VV, dB), `vh_vv_db`
+(their difference), `vh_cv` (VH's standard deviation over its mean through
+the period) and `passes`. Each track is summarised alone, because each
+looks at the ground from its own angle. A pixel needs `min_passes` (8)
+valid passes, and a track with fewer is left out with a warning. The area
+is limited to 20 million 30 m cells (about 18,000 km²).
+
+**Tested offline only.** The catalog and NASA's files are stood in for in
+`tests/test_sar.py`; the sandbox this was written in cannot reach NASA. The
+first real run is the test.
+
 ---
 
 ## 3. Run it in a notebook
@@ -961,6 +1014,8 @@ walk-through.
 |---|---|---|
 | 0 Get data | Fetch a DEM (USGS 3DEP) | `fetch_dem` (1 m lidar, 1/3 arc-second fill; tiles + mosaic) |
 | 0 Get data | NAIP imagery and NDVI | `naip_tiles` (NDVI and imagery tiles, NDVI and true-colour mosaics) |
+| 0 Get data | Sentinel-1 radar statistics (OPERA RTC) | `sentinel1_stats` (tiles per pass, per-track and combined statistics, per polygon) |
+| 0 Setup | Save Earthdata login | writes your `_netrc` in the toolbox's own Python (the password never goes through geolens) |
 | 0 Setup | Find the geolens environment | probes and remembers the environment's `python.exe` |
 | 0 Setup | Check memory before a run | `plan_landscape_run` |
 | 1 Whole routine, 2 Steps | step 1 and the routine: *Clip to one watershed first* | `watershed`, then the pass on the clipped DEM |

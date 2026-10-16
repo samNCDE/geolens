@@ -309,3 +309,62 @@ def run_api(python: str, function: str, kwargs: dict[str, Any],
             f"geolens.api.{function} failed (exit code {proc.returncode}) in "
             f"{python}:\n" + "\n".join(tail[-25:]))
     return result["value"]
+
+
+# -- NASA Earthdata login --------------------------------------------------------
+# Written here, by the host program's own Python, so a password typed into a
+# tool's dialog goes straight into the user's netrc file: never through the
+# geolens subprocess, its run records or a log. geolens.sar reads that file,
+# and has the same writer for notebooks; a test keeps the two in step.
+
+EARTHDATA_HOST = "urs.earthdata.nasa.gov"
+
+
+def netrc_file() -> Path:
+    """``%USERPROFILE%\\_netrc`` on Windows, ``~/.netrc`` elsewhere."""
+    return Path.home() / ("_netrc" if os.name == "nt" else ".netrc")
+
+
+def save_earthdata_login(username: str, password: str,
+                         path: str | None = None) -> str:
+    """Save a NASA Earthdata login in the user's netrc. Other sites' entries
+    are kept. Raises ValueError with a message for the user."""
+    user, pw = str(username or "").strip(), str(password or "")
+    if not user or not pw:
+        raise ValueError("Give both the Earthdata username and password.")
+    if any(c.isspace() or c in "\"'" for c in user + pw):
+        raise ValueError(
+            "A netrc file cannot hold a username or password containing "
+            "spaces or quotes. Change the Earthdata password at "
+            "https://urs.earthdata.nasa.gov and save it again.")
+    p = Path(path) if path else netrc_file()
+    keep: list[list[str]] = []
+    if p.exists():
+        text = p.read_text(encoding="utf-8")
+        toks = " ".join(line for line in text.splitlines()
+                        if not line.lstrip().startswith("#")).split()
+        if "macdef" in toks:
+            raise ValueError(
+                f"{p} has a macdef entry, which geolens will not rewrite. "
+                f"Add this line to it yourself: machine {EARTHDATA_HOST} "
+                f"login <username> password <password>")
+        cur: list[str] | None = None
+        for i, t in enumerate(toks):
+            if t in ("machine", "default") and (
+                    i == 0 or toks[i - 1] not in ("login", "password",
+                                                  "account")):
+                cur = [t]
+                keep.append(cur)
+            elif cur is not None:
+                cur.append(t)
+        keep = [e for e in keep
+                if not (e[0] == "machine" and e[1:2] == [EARTHDATA_HOST])]
+    lines = [f"machine {EARTHDATA_HOST} login {user} password {pw}"]
+    lines += [" ".join(e) for e in keep]
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if os.name != "nt":
+        os.chmod(tmp, 0o600)
+    tmp.replace(p)
+    return str(p)

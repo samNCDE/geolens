@@ -1581,6 +1581,39 @@ def naip_tiles(
                true_colour=true_colour, keep_imagery=keep_imagery)
 
 
+def sentinel1_stats(
+    aoi: str,
+    start: str | None = None,
+    end: str | None = None,
+    polygons: str | None = None,
+    min_passes: int = 8,
+) -> dict[str, Any]:
+    """Sentinel-1 radar statistics for an area, from NASA's OPERA RTC-S1.
+
+    For telling woody riparian vegetation from irrigated fields, which NDVI
+    cannot (docs/SAR_FEASIBILITY.md). Writes a VV/VH tile per pass
+    (``sar_tiles``, reused on a rerun), per-track and combined statistics
+    (``sar_stats.tif``: median VH and VV in dB, VH/VV in dB, VH's
+    coefficient of variation, passes) and, given ``polygons``, the
+    statistics per polygon (``sar_zonal.gpkg``). ``aoi`` is a raster or a
+    polygon layer; the period defaults to the year before ``end`` (default
+    today). Needs a free NASA Earthdata login saved with
+    ``geolens.sar.save_login`` (toolbox: 0 Setup > Save Earthdata login).
+    """
+    from .sar import sentinel1_stats as _s
+
+    return _s(aoi, start=start, end=end, polygons=polygons,
+              min_passes=min_passes)
+
+
+def earthdata_login_status() -> dict[str, Any]:
+    """Whether a NASA Earthdata login is saved on this computer, and for
+    whom. Never returns the password."""
+    from .sar import login_status
+
+    return login_status()
+
+
 def naip_selftest() -> dict[str, Any]:
     """Check the catalog is up and NAIP is still 4-band RGB+NIR.
 

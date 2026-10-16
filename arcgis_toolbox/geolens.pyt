@@ -119,8 +119,8 @@ class Toolbox(object):
     def __init__(self):
         self.label = "geolens"
         self.alias = "geolens"
-        self.tools = [FetchDEM, NaipImagery, FindEnvironment, CheckMemory,
-                      CoarsenDEM, WholeRoutine,
+        self.tools = [FetchDEM, NaipImagery, Sentinel1Radar, FindEnvironment,
+                      SaveEarthdataLogin, CheckMemory, CoarsenDEM, WholeRoutine,
                       Step1Terrain, Step1bCalibrate, Step2ValleyTypes, Step3StreamTypes,
                       Step4Stability, Step5Gullies, Step6Riparian,
                       AlluvialFans, WatershedClip, Headcuts, SectionPlots,
@@ -773,6 +773,93 @@ class NaipImagery(_Tool):
         for name, key in (("out_ndvi", "ndvi"), ("out_rgb", "rgb")):
             if res.get(key) and os.path.isfile(res[key]):
                 v[name].value = res[key]
+
+
+class Sentinel1Radar(_Tool):
+    label = "Sentinel-1 radar statistics (OPERA RTC)"
+    category = "0 Get data"
+    description = (
+        "Sentinel-1 radar backscatter over an area, from NASA's OPERA RTC-S1 "
+        "(30 m, terrain-corrected, from 2016), for telling riparian woodland "
+        "from irrigated fields, which NDVI cannot. Saves a VV/VH tile per "
+        "satellite pass in sar_tiles (reused on a rerun) and writes "
+        "sar_stats.tif: median VH and VV (dB), VH/VV (dB), how much VH "
+        "varies through the period (coefficient of variation) and the "
+        "number of passes. Give polygons (the riparian band, fields you "
+        "digitised) to get the same numbers per polygon. Needs your NASA "
+        "Earthdata login: run 0 Setup > Save Earthdata login once.")
+
+    def parameters(self):
+        return [
+            P("Area: a DEM", "aoi_raster", "GPRasterLayer", required=False),
+            P("Area: or a polygon layer", "aoi_polygon", "GPFeatureLayer",
+              required=False),
+            P("Output folder", "out_folder", "DEFolder"),
+            P("From (YYYY-MM-DD; blank = a year before the end)", "start",
+              "GPString", required=False),
+            P("To (YYYY-MM-DD; blank = today)", "end", "GPString",
+              required=False),
+            P("Polygons to summarise (optional)", "polygons",
+              "GPFeatureLayer", required=False),
+            P("Fewest passes for a value", "min_passes", "GPLong",
+              default=8, category=OPT),
+            D("Radar statistics", "out_stats", "DERasterDataset"),
+            D("Radar statistics per polygon", "out_zonal"),
+        ]
+
+    def updateMessages(self, parameters):
+        _Tool.updateMessages(self, parameters)
+        v = ga.by_name(parameters)
+        if v["aoi_raster"].value is not None and v["aoi_polygon"].value is not None:
+            v["aoi_polygon"].setErrorMessage("Give a DEM or a polygon layer, "
+                                             "not both.")
+
+    def execute(self, parameters, messages):
+        v = ga.by_name(parameters)
+        out = ga.text(v["out_folder"])
+        aoi = (ga.raster_path(v["aoi_raster"], out, "sar_area")
+               or ga.vector_path(v["aoi_polygon"], out, "sar_area"))
+        if not aoi:
+            ga.fail("Give a DEM or a polygon layer for the area.")
+        res = ga.run("sentinel1_stats", {
+            "aoi": aoi, "start": ga.text(v["start"]) or None,
+            "end": ga.text(v["end"]) or None,
+            "polygons": ga.vector_path(v["polygons"], out, "sar_polygons"),
+            "min_passes": int(v["min_passes"].value or 8)},
+            out, "Sentinel-1 passes")
+        arcpy.AddMessage("%s to %s; passes per track: %s (%s reused)"
+                         % (res.get("start"), res.get("end"),
+                            res.get("passes"), res.get("reused")))
+        if res.get("stats") and os.path.isfile(res["stats"]):
+            v["out_stats"].value = res["stats"]
+        ga.set_output(v, "out_zonal", res.get("zonal"))
+
+
+class SaveEarthdataLogin(_Tool):
+    label = "Save Earthdata login"
+    category = "0 Setup"
+    description = (
+        "Saves your NASA Earthdata login (free, from "
+        "https://urs.earthdata.nasa.gov) for the Sentinel-1 tool. It goes in "
+        "your own Windows profile (the _netrc file NASA's tools read), not "
+        "in geolens, so it is never shared with geolens. Each person saves "
+        "their own. Run it again to change it.")
+
+    def parameters(self):
+        return [P("Earthdata username", "username", "GPString"),
+                P("Earthdata password", "password", "GPEncryptedString"),
+                D("Saved in", "saved", "GPString")]
+
+    def execute(self, parameters, messages):
+        v = ga.by_name(parameters)
+        user = ga.text(v["username"])
+        try:
+            path = geolens_runner.save_earthdata_login(user,
+                                                       ga.text(v["password"]))
+        except ValueError as exc:
+            ga.fail(str(exc))
+        arcpy.AddMessage("Saved the Earthdata login for %s in %s" % (user, path))
+        v["saved"].value = path
 
 
 # -- more ------------------------------------------------------------------------
