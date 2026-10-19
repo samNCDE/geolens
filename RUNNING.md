@@ -982,6 +982,42 @@ is limited to 20 million 30 m cells (about 18,000 km²).
 `tests/test_sar.py`; the sandbox this was written in cannot reach NASA. The
 first real run is the test.
 
+### Soils — SSURGO as the valley floor's material (v0.32)
+
+The national geologic map behind `geology="auto"` is compiled at 1:50,000 to
+1:1,000,000, so a valley 80 m wide often comes back as its hillslopes'
+bedrock (see `geology.py`). SSURGO is mapped at about 1:24,000 and records
+each soil's parent material, so a valley floor's own alluvium is usually
+there. Use it in place of the geology:
+
+```python
+api.landscape_pass(DEM, geology="ssurgo")          # or, for an earlier run:
+api.valley_types_for_run(RUN, geology="ssurgo")
+s = api.fetch_soils(DEM, buffer_m=200)             # or just the layer
+```
+
+`soils_dir/soils.gpkg` (layer `soils`) has every map unit polygon in the
+area, clipped to it, with:
+
+| Field | |
+|---|---|
+| `material_class` | the dominant soil's parent material in geology's vocabulary: `alluvial`, `mass_movement` (colluvium, slope alluvium, debris flows), `residual` (residuum), `eolian`, `lacustrine`, ... or empty when the material says nothing about how the ground was laid down (volcanic ash, fill) |
+| `pmkind`, `pmgroupname`, `landform` | what SSURGO says, for checking the class |
+| `compname`, `comppct_r` | the dominant component and its share of the map unit |
+| `flodfreqdcd`, `drclassdcd`, `hydgrpdcd`, `brockdepmin` | flooding frequency, drainage class, hydrologic group, depth to bedrock (cm) |
+
+"Slope alluvium" is classed as mass movement, not alluvial: it is hillslope
+wash, and calling it alluvium would put a valley floor on every footslope.
+The data comes from USDA-NRCS Soil Data Access (public, no key) in tiles of
+0.1°, so a large area is many small queries. A tile the service cannot
+answer is split in four, up to three times. `soils_sources.json` records
+what was asked and the area by material.
+
+**Tested offline only,** against a stand-in for the service
+(`tests/test_soils.py`). The SQL follows NRCS's documented tables
+(`mupolygon`, `mapunit`, `muaggatt`, `component`, `copmgrp`, `copm`,
+`cogeomordesc`); the first real run is the test.
+
 ---
 
 ## 3. Run it in a notebook
@@ -1015,7 +1051,9 @@ walk-through.
 | 0 Get data | Fetch a DEM (USGS 3DEP) | `fetch_dem` (1 m lidar, 1/3 arc-second fill; tiles + mosaic) |
 | 0 Get data | NAIP imagery and NDVI | `naip_tiles` (NDVI and imagery tiles, NDVI and true-colour mosaics) |
 | 0 Get data | Sentinel-1 radar statistics (OPERA RTC) | `sentinel1_stats` (tiles per pass, per-track and combined statistics, per polygon) |
+| 0 Get data | SSURGO soils | `fetch_soils` (map units with `material_class`, usable as the geology layer) |
 | 0 Setup | Save Earthdata login | writes your `_netrc` in the toolbox's own Python (the password never goes through geolens) |
+| 1, 2 Steps | Geology: *Download USDA SSURGO soils* | `geology="ssurgo"` |
 | 0 Setup | Find the geolens environment | probes and remembers the environment's `python.exe` |
 | 0 Setup | Check memory before a run | `plan_landscape_run` |
 | 1 Whole routine, 2 Steps | step 1 and the routine: *Clip to one watershed first* | `watershed`, then the pass on the clipped DEM |

@@ -1,4 +1,4 @@
-# ArcGIS Pro test checklist (v0.31 beta)
+# ArcGIS Pro test checklist (v0.32 beta)
 
 About 30 minutes, on the Eagle Creek DEM (`DEM\EagleCreekDEM.tif`: 108
 million cells at 0.61 m, 40 km²). It runs every tool once. Use a new output
@@ -11,7 +11,7 @@ all that is needed to fix it.
 
 | # | Tool | Settings | Expect |
 |---|---|---|---|
-| 1 | 0 Setup ▸ Find the geolens environment | (none) | "geolens 0.31.0 found" |
+| 1 | 0 Setup ▸ Find the geolens environment | (none) | "geolens 0.32.0 found" |
 | 2 | 0 Setup ▸ Check memory before a run | DEM = Eagle Creek | "FITS comfortably", about 10 GB |
 | 3 | 2 Steps ▸ 1. Terrain, valley bottom and confinement | DEM; output folder `v30_test` | A few minutes. *Valley bottom* and *Reaches (confinement)* added, coloured. |
 | 4 | 2 Steps ▸ 1b. Calibrate confinement breaks | Run folder `v30_test`, breaks blank | A percentile table and five candidate splits in the messages. No layers. |
@@ -22,6 +22,8 @@ all that is needed to fix it.
 | 8 | 2 Steps ▸ 6. Riparian band from NAIP imagery | Run folder; NAIP folder `v30_test\naip_test` | Needs internet. NDVI tiles, an imagery tile and two mosaics in that folder, and *Riparian band* added. |
 | 8b | 0 Setup ▸ Save Earthdata login | Your Earthdata username and password | "Saved the Earthdata login for … in C:\Users\…\_netrc". The password is not shown in the messages. |
 | 8c | 0 Get data ▸ Sentinel-1 radar statistics (OPERA RTC) | Area: Eagle Creek DEM; folder `v30_test\sar`; polygons: *Riparian band* from step 8; dates blank (the last year) | Needs internet. Tiles in `sar\sar_tiles`, *Radar statistics* (5 bands) and *Radar statistics per polygon* added. Note how long it took, and what the messages say about streaming or downloading. Symbolise the polygons by `sar_vh_cv`. |
+| 8d | 0 Get data ▸ SSURGO soils | Area: Eagle Creek DEM; folder `v30_test\soils` | Needs internet. *Soils (SSURGO)* added, coloured by material: alluvium (yellow) should follow the valley floors. |
+| 8e | 2 Steps ▸ 2. Valley form, alluvial fans and valley types | Run folder `v30_test`; geology *Download USDA SSURGO soils* | First export step 6's *Valley types* (this run replaces them). Then compare: which reaches changed type, and which version looks right? |
 | 9 | 0 Get data ▸ Fetch a DEM (USGS 3DEP) | Area: draw or pick a small polygon (1–2 km²) | `dem_tiles` and `dem_mosaic.tif`. The messages say how much is 1 m lidar. |
 | 10 | 3 More tools ▸ Clip a DEM to one watershed | DEM; pour point = a point on a channel | *Watershed boundary* and the clipped DEM |
 | 11 | 1 Whole routine ▸ Run the whole routine | Eagle Creek; new folder `v30_whole` | Every layer from steps 3–7 at once |
@@ -36,8 +38,8 @@ Pro):
   is there.
 - **Cancel.** Start step 3 and press Cancel: the tool should stop within a
   few seconds.
-- **The live services** (steps 6, 8, 8c, 9): The National Map, the
-  Planetary Computer and NASA Earthdata (CMR and ASF) through NCDE's
-  network. For step 8c, a "refused the saved login" message means the
+- **The live services** (steps 6, 8, 8c, 8d, 9): The National Map, the
+  Planetary Computer, USDA Soil Data Access and NASA Earthdata (CMR and
+  ASF) through NCDE's network. For step 8c, a "refused the saved login" message means the
   username or password is wrong, or the account must sign in once at
   search.asf.alaska.edu.

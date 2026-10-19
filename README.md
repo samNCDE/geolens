@@ -6,7 +6,7 @@ types, and judges whether each reach's stream type is a **stable or unstable
 form for its valley**. Every channel section it measures comes with a plot you
 can click on the map.
 
-*Beta (v0.31). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
+*Beta (v0.32). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
 or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 
 ---
@@ -20,7 +20,7 @@ or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 | 3. Valley form, alluvial fans, valley types | Sections from floor to divide (width, side slopes, shape), a fan search, and USGS surficial geology give **Rosgen valley types I–XI** and the valley as an area. |
 | 4. Stream types | Five channel sections per reach on the lidar: bankfull at the regional curve's depth (Moody et al. 2003 for AZ/NM), width/depth, entrenchment, slope and sinuosity give a **Rosgen stream type A–G**, with a plot of every section. |
 | 5. Stable or unstable form | Each reach's stream type against its valley type (NRCS NEH 654 TS3E, after Rosgen 1996): **stable**, **unstable**, **check** or **unknown**. |
-| More | Gullies and headcuts, riparian band from NAIP NDVI, cross-sections along any centerline, watershed clipping, fetching 3DEP DEMs and NAIP imagery, and Sentinel-1 radar statistics (to tell riparian woodland from irrigated fields). |
+| More | Gullies and headcuts, riparian band from NAIP NDVI, cross-sections along any centerline, watershed clipping, fetching 3DEP DEMs, NAIP imagery and SSURGO soils (finer than the geologic map for valley floors), and Sentinel-1 radar statistics (to tell riparian woodland from irrigated fields). |
 
 ## How much to trust it
 
@@ -32,6 +32,7 @@ or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 | Alluvial fans | **New; checked on synthetic fans only.** Only cone-shaped regions count; every candidate is kept for review. |
 | Gullies, headcuts | **Experimental.** |
 | Sentinel-1 radar statistics | **New; tested offline only.** For an experiment, not yet a classification. |
+| SSURGO soils as geology | **New; tested offline only.** Compare its valley types with the USGS geology's before relying on it. |
 
 The reasons, with the numbers behind them, are in [START_HERE.md](START_HERE.md).
 
@@ -59,8 +60,8 @@ ArcGIS. Manual installs and troubleshooting are in [INSTALL.md](INSTALL.md).
 **ArcGIS Pro toolbox** (recommended):
 
 - **0 Get data**: fetch a USGS 3DEP DEM (1 m lidar where it exists), NAIP
-  imagery and NDVI, and Sentinel-1 radar statistics. Tiles and mosaics go to
-  a folder you choose.
+  imagery and NDVI, SSURGO soils, and Sentinel-1 radar statistics. Tiles and
+  mosaics go to a folder you choose.
 - **0 Setup**: find the environment, check memory before a run, coarsen a
   DEM that won't fit, and save your own NASA Earthdata login (for radar).
 - **1 Whole routine**: every step in one tool, optionally clipped to one
@@ -94,7 +95,7 @@ See [RUNNING.md](RUNNING.md).
   with the routing cached.
 - **Units:** DEMs in US survey feet are handled. Parameters are in metres and
   converted.
-- **Internet** is needed for geology, NAIP, DEM and radar downloads.
+- **Internet** is needed for geology, soils, NAIP, DEM and radar downloads.
   Everything else runs offline. Radar also needs a free NASA Earthdata
   login, which each person saves for themselves (*0 Setup ▸ Save Earthdata
   login*). Never put a login in shared code.
@@ -135,5 +136,6 @@ MIT licence (see [LICENSE](LICENSE)). Methods and data:
 - Valley–stream associations: NRCS National Engineering Handbook 654,
   Technical Supplement 3E.
 - Data services: USGS 3DEP and The National Map, USGS surficial geology,
-  NAIP on the Microsoft Planetary Computer, and OPERA RTC-S1 (NASA JPL,
-  distributed by ASF; contains modified Copernicus Sentinel data).
+  NAIP on the Microsoft Planetary Computer, USDA-NRCS SSURGO through Soil
+  Data Access, and OPERA RTC-S1 (NASA JPL, distributed by ASF; contains
+  modified Copernicus Sentinel data).

@@ -36,6 +36,10 @@ WHY NOT THE OTHER SOURCES
   ingested. Kept below as a fallback for when CNGM is unreachable.
 * **Soller DS-425** surficial materials is 1:5,000,000 and download-only —
   roughly a hundred times too coarse for valley work. Not used.
+* **SSURGO** soils (``geolens.soils``, ``geology="ssurgo"``) is mapped at
+  about 1:24,000 and names each soil's parent material, so it often has the
+  narrow valley floors this map misses (item 2 below). It is a soil map,
+  not a geologic one: its material is the top couple of metres.
 
 WHAT THIS CANNOT TELL YOU — read before trusting a valley type
 --------------------------------------------------------------

@@ -3,11 +3,11 @@
 **Start with [OVERVIEW.md](OVERVIEW.md)** — what the tool does, how to run it,
 and what to trust. This file is the working log behind it.
 
-## Pick up here (state at the end of the 16 Oct 2026 session)
+## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.31.0 beta. The full test suite passes on Linux with numba
-0.61.2. The release zip (`geolens_v0.31.0-beta.zip`) and a git bundle
-(`geolens_v0.31.0.bundle`, holding v0.30.0 to v0.31.0, ready to push) are
+**State.** v0.32.0 beta. The full test suite passes on Linux with numba
+0.61.2. The release zip (`geolens_v0.32.0-beta.zip`) and a git bundle
+(`geolens_v0.32.0.bundle`, holding v0.30.0 to v0.32.0, ready to push) are
 in Sam's Claude outputs folder.
 
 **Not yet done:**
@@ -15,7 +15,7 @@ in Sam's Claude outputs folder.
   for the repo. To push, create an empty `samNCDE/geolens` repo, then run:
 
   ```
-  git clone -b main geolens_v0.31.0.bundle geolens
+  git clone -b main geolens_v0.32.0.bundle geolens
   cd geolens
   git remote set-url origin https://github.com/samNCDE/geolens.git
   git push -u origin main
@@ -27,7 +27,7 @@ in Sam's Claude outputs folder.
   arcpy only. Run every tool once on a small area; the 30-minute pass is in
   `docs/ARCGIS_TEST_CHECKLIST.md`. Watch especially:
   - the geodatabase attachments and pop-ups;
-  - Fetch a DEM, NAIP and Sentinel-1 (live services);
+  - Fetch a DEM, NAIP, SSURGO and Sentinel-1 (live services);
   - 1b. Calibrate.
 - Fetchers are untested against the live services (they are tested offline
   with stubs). Sentinel-1 is the newest, and the most likely to need a fix
@@ -40,8 +40,11 @@ in Sam's Claude outputs folder.
    login; he saves it with *Save Earthdata login* (never in code). If
    riparian and field polygons separate on `sar_vh_cv`, build the
    "field-like" flag on the riparian band.
-3. Rosgen's new valley-type names (waiting on Sam's table).
-4. Validation against surveyed bankfull.
+3. SSURGO against USGS geology for valley types: run step 2 both ways on
+   Ruidoso and Eagle Creek and compare. If SSURGO's are better, make it
+   the toolbox default.
+4. Rosgen's new valley-type names (waiting on Sam's table).
+5. Validation against surveyed bankfull.
 
 **Found this session:** a fresh install pulled numba 0.68, which cannot
 compile pysheds' depression filling. The landscape pass died at its first
@@ -50,6 +53,28 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.32.0 (beta): SSURGO soils, as a finer geology for valley floors
+
+- **SSURGO soils** (`soils.py`, `api.fetch_soils`, toolbox *0 Get data ▸
+  SSURGO soils*, and `geology="ssurgo"` in the pass, step 2 and the
+  toolbox's geology choice). Map unit polygons come from USDA Soil Data
+  Access, in 0.1° tiles; a tile the service cannot answer is split. Each
+  polygon gets the dominant component's parent material as
+  `material_class`, in geology.py's vocabulary, so valley typing and the
+  stream-type substrate use it unchanged.
+- **Why.** geology.py documents the national map's weakness: at 1:50,000 to
+  1:1,000,000, a narrow valley comes back as its hillslopes' bedrock.
+  SSURGO is about 1:24,000 and usually maps the valley floor's own
+  alluvium. Sam asked for an SSURGO fetch early on ("download ... soil data
+  from SSURGO ... by pointing at a shapefile").
+- **Choices made:**
+  - "slope alluvium" and "valley side alluvium" are mass movement, not
+    alluvial: they are hillslope wash.
+  - Volcanic ash and fill get no class.
+  - The parent material is the representative group's uppermost one.
+- **Tested offline only,** against a stand-in for SDA. No connection from
+  the sandbox.
 
 ## v0.31.0 (beta): Sentinel-1 radar statistics; styling that survives a reload
 

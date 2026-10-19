@@ -30,7 +30,7 @@ METHODS = [
     ("Bank picker (v0.27 and earlier)", "picker"),
 ]
 GEOLOGY = ["Download USGS surficial geology", "None",
-           "Use the geology layer below"]
+           "Use the geology layer below", "Download USDA SSURGO soils"]
 
 
 def fail(message: str):
@@ -443,6 +443,13 @@ _VALLEY = {"I": "#8c2d04", "II": "#d95f0e", "III": "#fec44f", "IV": "#993404",
 _CONFINEMENT = {"confined": "#b2182b", "partly confined": "#f4a582",
                 "unconfined": "#4393c3"}
 _GREY = "#b8b7b2"
+_MATERIAL = {"alluvial": "#e3b505", "mass_movement": "#a0522d",
+             "residual": "#8c8c7a", "eolian": "#f1dca7",
+             "lacustrine": "#6baed6", "playa": "#c6b9df",
+             "organic": "#4d7c3a", "glacial_till": "#9fb8ba",
+             "ice_marginal": "#c6dbdc", "coastal": "#9ecae1",
+             "marine": "#3182bd", "bedrock_igneous_metamorphic": "#6e5a5a",
+             "bedrock_sedimentary": "#b39f8f"}
 
 # dataset name -> how it is drawn. "qml": categories from the .qml geolens
 # writes for QGIS beside the GeoPackage, so both programs show one legend.
@@ -476,6 +483,8 @@ STYLES = {
     "watershed_boundary": {"name": "Watershed boundary", "single": "#3f3f3f",
                            "alpha": 0},
     "headcuts": {"name": "Headcuts", "single": "#d7301f", "width": 6.0},
+    "soils": {"name": "Soils (SSURGO)", "field": "material_class",
+              "colours": _MATERIAL, "alpha": 45},
 }
 
 

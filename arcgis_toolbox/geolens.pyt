@@ -109,6 +109,8 @@ def _geology(v, out):
         return "auto"
     if g == ga.GEOLOGY[1]:
         return None
+    if g == ga.GEOLOGY[3]:
+        return "ssurgo"
     path = ga.vector_path(v["geology_layer"], out, "geology")
     if not path:
         ga.fail("Choose a geology layer, or pick download or none.")
@@ -119,7 +121,8 @@ class Toolbox(object):
     def __init__(self):
         self.label = "geolens"
         self.alias = "geolens"
-        self.tools = [FetchDEM, NaipImagery, Sentinel1Radar, FindEnvironment,
+        self.tools = [FetchDEM, NaipImagery, Sentinel1Radar, SsurgoSoils,
+                      FindEnvironment,
                       SaveEarthdataLogin, CheckMemory, CoarsenDEM, WholeRoutine,
                       Step1Terrain, Step1bCalibrate, Step2ValleyTypes, Step3StreamTypes,
                       Step4Stability, Step5Gullies, Step6Riparian,
@@ -833,6 +836,54 @@ class Sentinel1Radar(_Tool):
         if res.get("stats") and os.path.isfile(res["stats"]):
             v["out_stats"].value = res["stats"]
         ga.set_output(v, "out_zonal", res.get("zonal"))
+
+
+class SsurgoSoils(_Tool):
+    label = "SSURGO soils"
+    category = "0 Get data"
+    description = (
+        "USDA SSURGO soil map units over an area (a DEM's extent or a "
+        "polygon layer), from Soil Data Access, clipped to it. Each polygon "
+        "has material_class (alluvial, mass movement, residual, eolian...) "
+        "from its main soil's parent material, so the layer can be given to "
+        "step 2 as the geology layer; or pick 'Download USDA SSURGO soils' "
+        "there. SSURGO is mapped at about 1:24,000, so a narrow valley's own "
+        "alluvium usually shows, where the national geologic map often "
+        "gives the hillslope bedrock. Also: soil name, landform, flooding "
+        "frequency, drainage class, hydrologic group, depth to bedrock.")
+
+    def parameters(self):
+        return [
+            P("Area: a DEM", "aoi_raster", "GPRasterLayer", required=False),
+            P("Area: or a polygon layer", "aoi_polygon", "GPFeatureLayer",
+              required=False),
+            P("Output folder", "out_folder", "DEFolder"),
+            P("Buffer around the area, m", "buffer", "GPDouble", default=0.0,
+              category=OPT),
+            D("Soils (SSURGO)", "out_soils"),
+        ]
+
+    def updateMessages(self, parameters):
+        _Tool.updateMessages(self, parameters)
+        v = ga.by_name(parameters)
+        if v["aoi_raster"].value is not None and v["aoi_polygon"].value is not None:
+            v["aoi_polygon"].setErrorMessage("Give a DEM or a polygon layer, "
+                                             "not both.")
+
+    def execute(self, parameters, messages):
+        v = ga.by_name(parameters)
+        out = ga.text(v["out_folder"])
+        aoi = (ga.raster_path(v["aoi_raster"], out, "soils_area")
+               or ga.vector_path(v["aoi_polygon"], out, "soils_area"))
+        if not aoi:
+            ga.fail("Give a DEM or a polygon layer for the area.")
+        res = ga.run("fetch_soils", {"aoi": aoi,
+                                     "buffer_m": v["buffer"].value or 0.0},
+                     out, "SSURGO soils")
+        arcpy.AddMessage("%s polygons, %s map units; km2 by material: %s"
+                         % (res.get("polygons"), res.get("map_units"),
+                            res.get("km2_by_material")))
+        ga.set_output(v, "out_soils", res.get("soils"))
 
 
 class SaveEarthdataLogin(_Tool):

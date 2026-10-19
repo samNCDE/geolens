@@ -356,7 +356,9 @@ def landscape_pass(
 
     Supply ``geology`` if you have it. Rosgen II/V/VI, VIII/IX and X/XI are
     separated by depositional history rather than shape, so without it those
-    come back unresolved with their candidates listed.
+    come back unresolved with their candidates listed. ``"auto"`` downloads
+    USGS geology over the DEM; ``"ssurgo"`` downloads USDA SSURGO soils,
+    mapped finely enough to show a narrow valley's own alluvium.
 
     ``regional_curve="arid_sw_nm"`` (or ``"arid_sw_az"``) types streams
     against Moody et al. (2003)'s arid Southwest bankfull curves instead of
@@ -1169,7 +1171,9 @@ def valley_types_for_run(
     and re-judges stable/unstable form when the run has stream types.
 
     ``geology``: "auto" uses the run's downloaded geology if it has one, else
-    downloads it; a path uses that layer; None runs without.
+    downloads it; "ssurgo" does the same with USDA SSURGO soils (finer: a
+    narrow valley's alluvium is usually mapped); a path uses that layer;
+    None runs without.
     """
     from .landscape.pipeline import _geology_for_dem, valley_types_step
     from .safety import GeolensError
@@ -1188,6 +1192,12 @@ def valley_types_for_run(
     if isinstance(geology, str) and geology.lower() == "auto":
         g = run / "geology_dir" / "geology.gpkg"
         geology = str(g) if g.exists() else _geology_for_dem(
+            terrain.dem, Guard.from_env(), warnings)
+    elif isinstance(geology, str) and geology.lower() == "ssurgo":
+        from .landscape.pipeline import _soils_for_dem
+
+        s = run / "soils_dir" / "soils.gpkg"
+        geology = str(s) if s.exists() else _soils_for_dem(
             terrain.dem, Guard.from_env(), warnings)
     seg_len = (rec.get("arguments") or {}).get("segment_length_m") or 500.0
     out, w = valley_types_step(
@@ -1579,6 +1589,23 @@ def naip_tiles(
 
     return _nt(aoi, start=start, end=end, resolution_m=resolution_m,
                true_colour=true_colour, keep_imagery=keep_imagery)
+
+
+def fetch_soils(aoi: str, buffer_m: float = 0.0) -> dict[str, Any]:
+    """USDA SSURGO soil map units over an area, from Soil Data Access.
+
+    ``aoi`` is a raster (its extent, normally the DEM) or a polygon layer;
+    ``buffer_m`` widens it. Writes ``soils_dir/soils.gpkg``: each map unit
+    polygon clipped to the area, with ``material_class`` (alluvial,
+    mass_movement, residual, eolian, ...) from its dominant component's
+    parent material, so it can be passed as ``geology=`` to valley typing.
+    Also the component name, landform, flooding frequency, drainage class,
+    hydrologic group and depth to bedrock. ``geology="ssurgo"`` in
+    ``landscape_pass`` or ``valley_types_for_run`` fetches it for the DEM.
+    """
+    from .soils import fetch_soils as _fs
+
+    return _fs(aoi, buffer_m=buffer_m)
 
 
 def sentinel1_stats(

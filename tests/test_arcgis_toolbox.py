@@ -484,3 +484,16 @@ def test_sentinel1_tool_parameters(tbx):
                             aoi_polygon=str(DEM))
     tool.updateMessages(params)
     assert v["aoi_polygon"].hasError()
+
+
+def test_ssurgo_tool_and_geology_choice(tbx):
+    """Soil Data Access is stood in for in test_soils; here, the wiring."""
+    mod, _ = tbx
+    tool, params, v = _tool(tbx, "SsurgoSoils")
+    assert {"aoi_raster", "aoi_polygon", "out_folder", "buffer",
+            "out_soils"} <= set(v)
+    assert "to_gdb" in v                       # soils are a vector output
+    tool, params, v = _tool(tbx, "Step2ValleyTypes",
+                            geology="Download USDA SSURGO soils")
+    assert mod._geology(v, "unused") == "ssurgo"
+    assert "Download USDA SSURGO soils" in v["geology"].filter.list

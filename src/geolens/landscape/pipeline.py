@@ -58,6 +58,27 @@ def _geology_for_dem(dem: str, guard: Guard, warnings: list) -> str | None:
         return None
 
 
+def _soils_for_dem(dem: str, guard: Guard, warnings: list) -> str | None:
+    """SSURGO soils over this DEM's footprint, as the geology layer.
+
+    Finer than the national geologic map (about 1:24,000), so a narrow
+    valley's own alluvium is usually mapped. Saved in ``soils_dir`` in the
+    run folder. A failure warns and returns None, as for geology.
+    """
+    try:
+        from ..soils import fetch_soils
+
+        note("  fetching USDA SSURGO soils over the DEM footprint")
+        return fetch_soils(str(guard.read_path(dem)), guard=guard)["soils"]
+    except Exception as exc:                                 # noqa: BLE001
+        warnings.append(
+            f"SSURGO soils could not be downloaded ({type(exc).__name__}: "
+            f"{str(exc)[:200]}). The pass continues without geology, so "
+            f"Rosgen types that differ only by depositional history stay "
+            f"unresolved. Try geology=\"auto\" (USGS geology) instead.")
+        return None
+
+
 def run_landscape(
     dem: str,
     nhd: str | None = None,
@@ -166,15 +187,16 @@ def run_landscape(
     # geology_used=True three levels down in a JSON log -- so it looked
     # broken. A top-level entry the notebook can print is the fix.
     asked = geology
-    if isinstance(geology, str) and geology.lower() == "auto":
+    fetched = isinstance(asked, str) and asked.lower() in ("auto", "ssurgo")
+    if fetched and asked.lower() == "auto":
         geology = _geology_for_dem(dem, guard, warnings)
+    elif fetched:
+        geology = _soils_for_dem(dem, guard, warnings)
     out["geology"] = {
         "requested": asked,
         "path": str(geology) if geology is not None else None,
-        "status": ("downloaded" if isinstance(asked, str)
-                   and asked.lower() == "auto" and geology is not None
-                   else "download failed — see warnings"
-                   if isinstance(asked, str) and asked.lower() == "auto"
+        "status": ("downloaded" if fetched and geology is not None
+                   else "download failed — see warnings" if fetched
                    else "supplied" if geology is not None else "none"),
     }
     if asked is None:
