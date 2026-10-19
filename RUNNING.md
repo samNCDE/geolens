@@ -1099,7 +1099,8 @@ on the computer. When `env` exists:
   toolbox can never be different versions, and a new release runs from
   wherever it is unzipped.
 
-`start_notebook_portable.bat` opens the notebook the same way.
+`start_notebook_portable.bat` opens the notebook the same way. Running
+`setup_portable.bat` again updates the packages in `env` in place (v0.33.1).
 
 ### Can this computer reach the services? (v0.33)
 

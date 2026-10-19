@@ -5,10 +5,10 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.33.0 beta. The full test suite passes on Linux with numba
+**State.** v0.33.1 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
 The release is unzipped at `S:\geolens\gl33`. The zip and a git bundle
-(`geolens_v0.33.0.bundle`, holding v0.30.0 to v0.33.0) are in
+(`geolens_v0.33.1.bundle`, holding v0.30.0 to v0.33.1) are in
 `S:\geolens\Claude outputs`.
 
 **Step list:** the Claude Doc "geolens step list" holds the work queue, for
@@ -20,18 +20,18 @@ scheduled task starts it in this session. It runs on the existing
 environment unless `setup_portable.bat` succeeds first; nothing goes on C:.
 
 **Not yet done:**
-- **Not pushed to GitHub.** This session's GitHub access was not enabled
-  for the repo. To push, create an empty `samNCDE/geolens` repo, then run:
-
-  ```
-  git clone -b main geolens_v0.33.0.bundle geolens
-  cd geolens
-  git remote set-url origin https://github.com/samNCDE/geolens.git
-  git push -u origin main
-  ```
-
-  The bundle is in Claude outputs. Claude Code can do this too, given
-  access to the repo.
+- **GitHub: Sam pushes it.** The repo `github.com/samNCDE/geolens` exists
+  (empty on 19 Oct) and is now meant to be the home of the code. Claude's
+  session had no GitHub access to it, so Sam double-clicks
+  `S:\geolens\push_to_github.bat`. It clones the newest bundle in Claude
+  outputs into `S:\geolens\repo`, or fast-forwards that copy, and pushes
+  `main`. It never forces. It needs git: Git for Windows, or the portable
+  Git unpacked into `S:\geolens\PortableGit`. GitHub asks him to sign in
+  once, in the browser.
+  - **Before the next release, start from GitHub, not from a bundle:**
+    fetch `main` from the repo and commit on top of it, so anything Sam
+    changed there is kept, and the push stays a fast-forward.
+  - A session with push access to the repo can push directly instead.
 - **Untested in ArcGIS Pro.** The toolbox is tested against a stand-in for
   arcpy only. Run every tool once on a small area; the 30-minute pass is in
   `docs/ARCGIS_TEST_CHECKLIST.md`. Watch especially:
@@ -62,6 +62,21 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.33.1 (beta): Windows line endings for the batch files
+
+- `setup_portable.bat` and `start_notebook_portable.bat` were written with
+  LF-only line endings. cmd.exe can miss a `goto` label in such a file, and
+  the portable setup jumps to one whenever a step fails. Both now have CRLF,
+  like `install_windows.bat`.
+- `.gitattributes` keeps it that way: batch files are stored with CRLF and
+  never converted; shell scripts stay LF, even in a Windows checkout.
+- `tests/test_line_endings.py` checks the bytes of every `.bat` and `.sh`.
+- `setup_portable.bat` run a second time now updates the existing `env` in
+  place (`micromamba install`), as its message said, instead of rebuilding
+  it from scratch.
+- `push_to_github.bat` (beside the release, not in it) puts the release on
+  GitHub; see "GitHub" above.
 
 ## v0.33.0 (beta): projects of any size, portable drive, audit fixes
 

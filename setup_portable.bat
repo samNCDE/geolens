@@ -32,8 +32,10 @@ echo  geolens portable setup in %ROOT%
 echo.
 
 if exist "%ROOT%\env\python.exe" (
-  echo  [1/4] env already exists: updating packages in place
+  set "ACTION=install"
+  echo  [1/4] env already exists: updating its packages in place
 ) else (
+  set "ACTION=create"
   echo  [1/4] building env
 )
 
@@ -44,7 +46,7 @@ if not exist "%MAMBA%" (
 )
 
 echo  [2/4] conda-forge packages (5-15 minutes the first time)
-"%MAMBA%" create -y -p "%ROOT%\env" -r "%PORT%\mamba" -c conda-forge --override-channels ^
+"%MAMBA%" %ACTION% -y -p "%ROOT%\env" -r "%PORT%\mamba" -c conda-forge --override-channels ^
   python=3.11 pip "geopandas>=1.0" "rasterio>=1.3" "shapely>=2.0" "pyproj>=3.4" ^
   "fiona>=1.9" "pandas>=2.0" "matplotlib-base>=3.7" "tqdm>=4.65" ^
   "scikit-image>=0.21" "scipy>=1.10" "psutil>=5.9" "numba>=0.57,<0.62" ^

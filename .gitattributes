@@ -1,0 +1,8 @@
+# Line endings the operating system cares about.
+#
+# cmd.exe can miss a goto or call label in a batch file whose lines end in a
+# bare LF, so batch files are stored with CRLF and never converted.
+*.bat -text
+*.cmd -text
+# Shell scripts keep LF, even in a Windows checkout.
+*.sh text eol=lf
