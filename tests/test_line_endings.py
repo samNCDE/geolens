@@ -32,7 +32,8 @@ def _lone_lf(data: bytes) -> int:
 def test_batch_files_have_windows_line_endings():
     bats = _files("*.bat")
     assert {"install_windows.bat", "setup_portable.bat",
-            "start_notebook_portable.bat"} <= {p.name for p in bats}
+            "start_notebook_portable.bat",
+            "run_project.bat"} <= {p.name for p in bats}
     bad = [p.name for p in bats if _lone_lf(p.read_bytes())]
     assert not bad, f"LF-only lines in {bad}: cmd.exe can miss their labels"
 
@@ -51,3 +52,12 @@ def test_git_keeps_them_that_way():
 def test_a_lone_lf_is_caught():
     assert _lone_lf(b"@echo off\r\ngoto :x\r\n:x\r\n") == 0
     assert _lone_lf(b"@echo off\r\ngoto :x\n:x\r\n") == 1
+
+
+def test_the_launcher_runs_a_project_with_the_drives_own_python():
+    """run_project.bat: drag a boundary on, it runs on its own."""
+    text = (ROOT / "run_project.bat").read_text(encoding="ascii")
+    assert '"%PY%" -m geolens.cli project "%BOUNDARY%"' in text
+    assert text.index(r"%ROOT%\env\python.exe") < text.index(r"envs\geolens")
+    assert r'set "PYTHONPATH=%ROOT%\src"' in text     # this release's geolens
+    assert text.rstrip().endswith("exit /b %RC%") and "pause" in text

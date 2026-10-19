@@ -383,3 +383,80 @@ def test_a_failed_pilot_choice_does_not_stop_the_run(stubs, tmp_path,
                               guard=Guard(out_dir=tmp_path / "p"))
     assert res["level_b"] == {"150100000101": "done"}
     assert any("could not be chosen" in w for w in res["warnings"])
+
+
+def test_the_project_command(tmp_path, monkeypatch):
+    """`geolens project boundary.gpkg`: the folder beside the boundary, and
+    the landscape defaults (SSURGO material, a representative pilot)."""
+    import os
+
+    from geolens import cli
+
+    seen = {}
+
+    def run_project(boundary, **kw):
+        seen.update(kw, boundary=boundary, out=os.environ["GEOLENS_OUT"])
+        return {"project": seen["out"], "level_b": {}, "warnings": [],
+                "seconds": 1.0}
+
+    monkeypatch.setattr(api, "run_project", run_project)
+    monkeypatch.delenv("GEOLENS_OUT", raising=False)
+    bnd = tmp_path / "ranch.gpkg"
+    bnd.write_text("")
+    assert cli.main(["project", str(bnd)]) == 0
+    assert Path(seen["out"]) == tmp_path / "ranch_geolens"
+    assert (seen["geology"], seen["level_b"], seen["pilot_by"],
+            seen["pilot_count"], seen["soils"]) == (
+        "ssurgo", "pilot", "representative", 3, True)
+    url = "https://gis.blm.gov/arcgis/rest/services/x/MapServer/3"
+    assert cli.main(["project", url, "--where", "ADM_UNIT_CD='AZC01000'",
+                     "--out", str(tmp_path / "kingman"), "--geology", "none",
+                     "--pilot-by", "unconfined"]) == 0
+    assert seen["boundary"] == url and seen["where"] == "ADM_UNIT_CD='AZC01000'"
+    assert Path(seen["out"]) == tmp_path / "kingman"
+    assert seen["geology"] is None and seen["pilot_by"] == "unconfined"
+
+
+def test_a_line_boundary_is_buffered_into_a_polygon(tmp_path):
+    from shapely.geometry import LineString
+
+    src = tmp_path / "wash.gpkg"
+    gpd.GeoDataFrame(geometry=[LineString([(410000, 4505000),
+                                           (412000, 4506000)])],
+                     crs=UTM).to_file(src, driver="GPKG")
+    out = project.fetch_boundary(str(src), guard=Guard(out_dir=tmp_path / "o"))
+    g = gpd.read_file(out)
+    assert list(g.geom_type) == ["Polygon"]
+    length = 2236.07                                   # metres of line
+    assert g.to_crs(UTM).area.sum() == pytest.approx(
+        2 * 250 * length + 3.14159 * 250 ** 2, rel=0.02)
+
+
+def test_running_out_of_memory_coarsens_and_carries_on(stubs, tmp_path,
+                                                       monkeypatch):
+    """Left on its own overnight, a project that runs out of memory in level
+    A runs it again at twice the cell size instead of stopping."""
+    real = api.landscape_pass
+    calls = []
+
+    def landscape_pass(dem, **kw):
+        calls.append(dem)
+        if len(calls) == 1:
+            raise MemoryError("Unable to allocate 61.2 GiB")
+        return real(dem, **kw)
+
+    monkeypatch.setattr(api, "landscape_pass", landscape_pass)
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["field office"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    out = tmp_path / "proj"
+    res = project.run_project(str(bnd), level_b="none", geology=None,
+                              stream_threshold_km2=3.0, soils=False,
+                              section_plots=False, guard=Guard(out_dir=out))
+    status = json.loads((out / "project.json").read_text())
+    assert len(calls) == 2 and calls[0] != calls[1]
+    assert status["steps"]["plan_a"]["cell_m"] == 60.0       # 30 m doubled
+    assert any("ran out of memory" in w for w in res["warnings"])
+    vt = gpd.read_file(res["valley_types"])
+    assert (vt["dem_cell_m"] == 60.0).all()

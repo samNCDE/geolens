@@ -1065,6 +1065,20 @@ A real project is a boundary: a BLM field office, a ranch, a district. At
 1 m the Kingman Field Office (about 23,000 km²) would be some 23 billion
 cells, far beyond one run. A project therefore runs in two levels:
 
+From a shell, or by dragging the boundary onto `run_project.bat` (v0.36),
+which finds the drive's own Python, or the installed environment, and runs
+the same command:
+
+```
+geolens project boundary.gpkg                    # into boundary_geolens beside it
+geolens project https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer/3 --where "ADM_UNIT_CD='AZC01000'" --out S:\kingman\geolens
+```
+
+Options: `--level-b`, `--pilots`, `--pilot-by`, `--huc12s`, `--geology`
+(`ssurgo`, `auto`, `none`), `--curve`, `--threshold-km2`, `--hours`,
+`--no-plots`, `--no-soils`. A line or point boundary is buffered by 250 m.
+In Python:
+
 ```python
 r = api.run_project(
     "https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer/3",

@@ -18,6 +18,20 @@ def _print(obj: Any, compact: bool = False) -> None:
     sys.stdout.write("\n")
 
 
+def project_folder(boundary: str, out: str | None = None):
+    """Where ``geolens project`` writes: ``--out``, else a folder named for
+    the boundary file beside it, else (a map service) ``geolens_project`` in
+    the current folder."""
+    from pathlib import Path
+
+    if out:
+        return Path(out).expanduser().resolve()
+    if str(boundary).lower().startswith(("http://", "https://")):
+        return Path.cwd().resolve() / "geolens_project"
+    b = Path(boundary).expanduser().resolve()
+    return b.parent / f"{b.stem}_geolens"
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="geolens",
@@ -277,6 +291,37 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--window-m", type=float, default=12.0)
     s.add_argument("--min-excess-drop-m", type=float, default=0.8)
     s.add_argument("--out-prefix", default="headcuts")
+
+    s = sub.add_parser(
+        "project",
+        help="a whole project from one boundary: valleys everywhere, "
+             "channels on lidar; runs on its own and resumes")
+    s.add_argument("boundary", help="a boundary layer (shp, gpkg, geojson, "
+                   "kml; lines and points are buffered) or an ArcGIS REST "
+                   "layer URL")
+    s.add_argument("--where", default=None,
+                   help="which features of a map service layer, e.g. "
+                        "ADM_UNIT_CD='AZC01000'")
+    s.add_argument("--out", default=None,
+                   help="project folder (default: <boundary name>_geolens "
+                        "beside a boundary file)")
+    s.add_argument("--level-b", default="pilot",
+                   choices=["pilot", "all", "listed", "none"])
+    s.add_argument("--pilots", type=int, default=3)
+    s.add_argument("--pilot-by", default="representative",
+                   choices=["representative", "unconfined"])
+    s.add_argument("--huc12s", default=None,
+                   help="comma-separated HUC12 codes for --level-b listed")
+    s.add_argument("--geology", default="ssurgo",
+                   choices=["ssurgo", "auto", "none"],
+                   help="valley material: SSURGO soils (default), USGS "
+                        "geology, or none")
+    s.add_argument("--curve", default="auto", help="regional bankfull curve")
+    s.add_argument("--threshold-km2", type=float, default=1.0)
+    s.add_argument("--hours", type=float, default=None,
+                   help="stop level B after this many hours")
+    s.add_argument("--no-plots", action="store_true")
+    s.add_argument("--no-soils", action="store_true")
 
     sub.add_parser("backends", help="show which flow-routing backends are installed")
     s = sub.add_parser("history", help="what has been run in this output directory")
@@ -551,6 +596,26 @@ def main(argv: list[str] | None = None) -> int:
                 "summary": r["classified"]["summary"],
                 "warnings": r["warnings"],
             })
+
+        elif args.cmd == "project":
+            import os
+
+            out = project_folder(args.boundary, args.out)
+            out.mkdir(parents=True, exist_ok=True)
+            os.environ["GEOLENS_OUT"] = str(out)
+            print(f"geolens project -> {out}", file=sys.stderr)
+            r = api.run_project(
+                args.boundary, where=args.where, level_b=args.level_b,
+                pilot_count=args.pilots, pilot_by=args.pilot_by,
+                huc12s=args.huc12s, stream_threshold_km2=args.threshold_km2,
+                geology=None if args.geology == "none" else args.geology,
+                regional_curve=args.curve, section_plots=not args.no_plots,
+                level_b_hours=args.hours, soils=not args.no_soils)
+            _print({"project": r.get("project"),
+                    "results": str(out / "RESULTS.md"),
+                    "level_b": r.get("level_b"),
+                    "warnings": r.get("warnings"),
+                    "seconds": r.get("seconds")})
 
         elif args.cmd == "backends":
             _print(api.landscape_backends())

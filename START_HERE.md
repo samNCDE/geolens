@@ -82,6 +82,10 @@ installed on the computer, and temporary files and caches stay on the
 drive, so the drive can be passed to a colleague whose computer has ArcGIS
 Pro.
 
+**Then, to run a whole project on its own:** drag the project's boundary
+onto **`run_project.bat`**. No ArcGIS needed; the results go in a folder
+beside the boundary.
+
 [INSTALL.md](INSTALL.md) covers the manual route and what to do when the
 install fails.
 
@@ -125,7 +129,7 @@ ArcGIS.
    Add Toolbox* and choose `arcgis_toolbox\geolens.pyt` in the geolens
    folder.
 2. **Check it:** run *0 Setup ▸ Find the geolens environment*. It should
-   report "geolens 0.35.0 found". If it can't find the environment, give it
+   report "geolens 0.36.0 found". If it can't find the environment, give it
    the environment's `python.exe`, which the installer prints. The tool
    remembers it.
    *0 Setup ▸ Check internet services* says which download services this

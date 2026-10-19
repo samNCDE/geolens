@@ -220,7 +220,7 @@ def query_layer(url: str, where: str = "1=1", fields: str = "*",
 
 
 def fetch_boundary(source: str, where: str | None = None,
-                   guard: Guard | None = None) -> str:
+                   guard: Guard | None = None, buffer_m: float = 250.0) -> str:
     """The project boundary as ``boundary.gpkg``: a polygon layer, or an
     ArcGIS REST layer URL with a ``where`` clause (e.g. a BLM field office:
     ``https://gis.blm.gov/arcgis/rest/services/admin_boundaries/
@@ -237,8 +237,22 @@ def fetch_boundary(source: str, where: str | None = None,
     if g.crs is None:
         raise GeolensError(f"{source} has no coordinate system.")
     g = g[g.geometry.notna() & ~g.geometry.is_empty]
+    if g.empty:
+        raise GeolensError(f"{source} has no geometry.")
     if not g.geom_type.isin(["Polygon", "MultiPolygon"]).all():
-        raise GeolensError(f"{source} is not a polygon layer.")
+        if not g.geom_type.isin(["LineString", "MultiLineString", "Point",
+                                 "MultiPoint", "Polygon",
+                                 "MultiPolygon"]).all():
+            raise GeolensError(f"{source} is not a polygon, line or point "
+                               f"layer.")
+        # A stream line or a few points: the area within buffer_m of them.
+        from .sar import _utm_for
+
+        c = _union(g.to_crs(4326)).centroid
+        utm = _utm_for(c.x, c.y)
+        g = gpd.GeoDataFrame({"name": ["buffered boundary"]}, geometry=[
+            _union(g.to_crs(utm)).buffer(float(buffer_m))], crs=utm)
+        note(f"boundary: lines and points buffered by {buffer_m:g} m")
     out = Path(guard.write_path("boundary.gpkg"))
     g.to_file(str(out), driver="GPKG", layer="boundary")
     return str(out)
@@ -733,12 +747,28 @@ def run_project(boundary: str, where: str | None = None,
                         "call valleys bedrock; run the project again once "
                         "SSURGO answers, after deleting pass_a from "
                         "project.json.")
-        note(f"project: level A pass at {cell_a:g} m")
-        with _out(A / "run"):
-            res = api.landscape_pass(
-                dem_run, stream_threshold_km2=stream_threshold_km2,
-                segment_length_m=500.0, valley_types=True, stream_types=False,
-                geology=geo_a, fans=True)
+        for attempt in range(3):
+            note(f"project: level A pass at {cell_a:g} m")
+            try:
+                with _out(A / "run"):
+                    res = api.landscape_pass(
+                        dem_run, stream_threshold_km2=stream_threshold_km2,
+                        segment_length_m=500.0, valley_types=True,
+                        stream_types=False, geology=geo_a, fans=True)
+                break
+            except MemoryError:
+                # Left to run on its own, a project coarsens and carries on
+                # rather than stopping for the night.
+                if attempt == 2:
+                    raise
+                cell_a *= 2
+                st.warn(f"Level A ran out of memory at {cell_a / 2:g} m and "
+                        f"was run again at {cell_a:g} m. Valleys narrower "
+                        f"than {3 * cell_a:g} m are not resolved.")
+                with _out(A / "dem"):
+                    dem_run = api.resample_dem(dem_a, cell_a)["path"]
+                st.done("plan_a", dem=dem_run, cell_m=cell_a, peak_gb=None,
+                        verdict="coarsened after running out of memory")
         vt = (res.get("valley_types") or {})
         for w in res.get("warnings") or []:
             st.warn(f"level A: {w}")

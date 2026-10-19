@@ -5,11 +5,14 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.35.0 beta. The full test suite passes on Linux with numba
+**State.** v0.36.0 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
 The release is unzipped at `S:\geolens\gl33` (the folder name stayed). The
-zip and a git bundle (`geolens_v0.35.0.bundle`, holding v0.30.0 to v0.35.0)
-are in `S:\geolens\Claude outputs`.
+zip and a git bundle (`geolens_v0.36.0.bundle`, holding v0.30.0 to v0.36.0)
+are in `S:\geolens\Claude outputs`. **While the Kingman run uses gl33, its
+code is not touched:** a release made during the run goes to Claude outputs
+only, and into gl33 once the run has stopped (a module swapped mid-run could
+mix versions in one process).
 
 **Step list:** the Claude Doc "geolens step list" holds the work queue, for
 Sam to review, approve and edit. Read it before choosing what to do next.
@@ -76,6 +79,26 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.36.0 (beta): pick a boundary, let it run
+
+The end goal Sam set: copy geolens onto a drive, pick a project boundary,
+and leave it to run.
+
+- `run_project.bat`: drag a boundary onto it (or paste a path, or a map
+  service URL and a where clause). It finds the drive's own `env`, then the
+  installed environment, runs this release's `src`, and pauses at the end
+  with where the results are.
+- `geolens project <boundary>`: the same from a shell, with the toolbox's
+  options; the folder defaults to `<boundary name>_geolens` beside it.
+- A boundary of lines or points (a wash, a few springs) is buffered by
+  250 m into a polygon, as in Sam's data package.
+- Level A that runs out of memory is run again at twice the cell size (up
+  to twice), with a warning, instead of stopping the night's run. Kingman's
+  plan at 10 m was "tight": a 70 GB peak.
+- Checked on 19 Oct: pysheds routing works under numba 0.67.0 with NumPy
+  2.4 (Sam's environment); the *Find the geolens environment* warning about
+  numba above 0.61 is conservative for 0.67. 0.68 still fails.
 
 ## v0.35.0 (beta): Rosgen's 2022 fluvial landscape types
 

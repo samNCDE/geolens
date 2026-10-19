@@ -28,7 +28,8 @@ OUT = ROOT / "cli_test_out"
 # which is available where this suite runs. Each has its own --selftest.
 _UNREACHABLE = {"naip", "geology", "inundation", "validate-floodplain",
                 "compare-backends", "riparian", "ingest-labels",
-                "calibrate-cycle"}
+                "calibrate-cycle",
+                "project"}       # offline in test_project, with stand-ins
 
 
 @pytest.fixture(scope="module", autouse=True)
