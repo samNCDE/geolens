@@ -261,7 +261,14 @@ def classify_segments(
             "anything consequential."
         )
     gdf["channel_width_m"] = cw
-    gdf["confinement_ratio"] = gdf["valley_width_m"] / cw
+    # A segment with no valley bottom at all was not measured: its ratio is
+    # unknown, not zero. Dividing gave 0, and 0 classed it "confined" -- 73
+    # of 858 reaches (8.5%) on Sam's Ruidoso 10 m run, all reported confined
+    # while the warning below said unknown.
+    with np.errstate(invalid="ignore", divide="ignore"):
+        gdf["confinement_ratio"] = np.where(
+            gdf["valley_area_m2"].to_numpy() > 0,
+            gdf["valley_width_m"].to_numpy() / cw, np.nan)
 
     note("classifying")
     gdf["confinement"] = [

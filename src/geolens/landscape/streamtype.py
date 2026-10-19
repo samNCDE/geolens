@@ -479,12 +479,21 @@ REGIONAL_CURVES: dict[str, dict[str, Any]] = {
     # below South Fork, 8.1 mi2, 15.8 ft x 0.7 ft measured against 17.8 x
     # 0.77 predicted. (Moody's Eagle Creek is not the "Eagle Creek" DEM
     # geolens is tested on elsewhere in these comments -- different places.)
+    # Also from the report (Figures 7, 15): bankfull cross-sectional area,
+    # A = 11.962 DA^0.5396 ft2 (AZ), 4.7799 DA^0.512 ft2 (NM), and bankfull
+    # discharge, Q = 88.73 DA^0.4711 cfs (AZ), 15.31 DA^0.6119 cfs (NM),
+    # converted the same way (m2, m3/s; A in km2). The division between the
+    # provinces is the report's Figure 2: a dashed line near 109.6 W, west of
+    # the New Mexico line; its study region runs about 114.0 to 104.0 W and
+    # 31.6 to 38.1 N (see geolens.project.choose_curve).
     "arid_sw_nm": {
         "width": (2.31063, 0.2811), "depth": (0.11343, 0.237),
+        "area": (0.2728, 0.512), "discharge": (0.24217, 0.6119),
         "source": "Moody et al. (2003), Eastern Arizona / New Mexico province",
     },
     "arid_sw_az": {
         "width": (3.55369, 0.3169), "depth": (0.19331, 0.219),
+        "area": (0.66499, 0.5396), "discharge": (1.60476, 0.4711),
         "source": "Moody et al. (2003), central & southern Arizona province",
     },
 }
@@ -1450,9 +1459,20 @@ def rosgen_stream_types(dem: str | Path,
             f"not {bankfull_method!r}.")
     guard = guard or Guard.from_env()
     warnings: list[str] = []
+    seg = gpd.read_file(str(guard.read_path(segments)))
+    if isinstance(regional_curve, str) and regional_curve == "auto":
+        # The Moody et al. (2003) province from where the reaches are.
+        from ..project import choose_curve
+
+        c = (seg.to_crs(4326).geometry.unary_union.centroid
+             if seg.crs is not None and len(seg) else None)
+        regional_curve, why = (choose_curve(c.x, c.y) if c is not None
+                               else ("bieger_us", "no location: generic"))
+        note(f"regional curve by location: {regional_curve} ({why})")
+        if "beyond" in why or regional_curve == "bieger_us":
+            warnings.append(f"Regional curve {regional_curve}: {why}.")
     curve = _resolve_curve(regional_curve)
 
-    seg = gpd.read_file(str(guard.read_path(segments)))
     if id_field is None:
         for cand in ("seg_id", "segment_id", "valley_id"):
             if cand in seg.columns:

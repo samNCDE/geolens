@@ -120,7 +120,10 @@ def test_calibrating_confinement_for_a_run(run, monkeypatch):
     seg = Path(res["reclassified"]["segments"])
     assert seg.exists() and seg.parent.name == "reclassified_dir"
     g = gpd.read_file(seg)
-    assert set(g["confinement"]) <= {"confined", "partly confined", "unconfined"}
+    # "unknown": reaches with no valley bottom were measured as nothing,
+    # not as confined (v0.33).
+    assert set(g["confinement"]) <= {"confined", "partly confined",
+                                     "unconfined", "unknown"}
     if (run / "valley_form_dir" / "valley_form_segments.csv").exists():
         assert Path(res["valley_types"]["segments"]).exists()
     assert api._run_segments(run) == seg

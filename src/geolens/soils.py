@@ -58,7 +58,7 @@ _SOIL_FIRST: list[tuple[str | None, tuple[str, ...]]] = [
 
 COLUMNS = ["mukey", "musym", "muname", "compname", "comppct_r", "pmkind",
            "pmgroupname", "landform", "flodfreqdcd", "drclassdcd",
-           "hydgrpdcd", "brockdepmin", "material_class"]
+           "hydgrpdcd", "brockdepmin", "kwfact", "material_class"]
 
 
 def soil_material(pmkind: str | None, pmgroupname: str | None = None
@@ -302,11 +302,22 @@ def _attributes(mukeys: list[int], ask) -> dict[int, dict]:
         if ck not in landform or rank < landform[ck][0]:
             landform[ck] = (rank, r.get("geomfname"))
 
+    # Erodibility (whole-soil K) of the dominant component's surface horizon.
+    kw: dict[int, tuple] = {}
+    for r in _batched(ask, (
+            "SELECT ch.cokey, ch.hzdept_r, ch.kwfact FROM chorizon AS ch "
+            "WHERE ch.cokey IN ({keys})"), cokeys):
+        ck = int(r["cokey"])
+        top = _number(r.get("hzdept_r"), 999.0)
+        if ck not in kw or top < kw[ck][0]:
+            kw[ck] = (top, _number(r.get("kwfact")))
+
     for mk, rec in out.items():
         comp = dominant.get(mk) or {}
         ck = int(comp["cokey"]) if comp.get("cokey") not in (None, "") else None
         _, kind, group = pm.get(ck, (None, None, None))
         rec["brockdepmin"] = _number(rec.get("brockdepmin"))
+        rec["kwfact"] = (kw.get(ck) or (None, None))[1]
         rec.update(compname=comp.get("compname"),
                    comppct_r=_number(comp.get("comppct_r")), pmkind=kind,
                    pmgroupname=group,
@@ -319,8 +330,8 @@ def _attributes(mukeys: list[int], ask) -> dict[int, dict]:
 
 def fetch_soils(aoi: str | Path, buffer_m: float = 0.0, timeout: int = 120,
                 guard: Guard | None = None,
-                ask: Callable[[str], list[dict]] | None = None
-                ) -> dict[str, Any]:
+                ask: Callable[[str], list[dict]] | None = None,
+                max_area_km2: float = MAX_AREA_KM2) -> dict[str, Any]:
     """SSURGO map units over ``aoi`` (a raster's extent, or a polygon layer),
     with ``material_class`` for valley typing. ``buffer_m`` widens the area.
     Writes ``soils_dir/soils.gpkg`` in the AOI's coordinate system."""
@@ -346,9 +357,9 @@ def fetch_soils(aoi: str | Path, buffer_m: float = 0.0, timeout: int = 120,
         aoi_utm = aoi_utm.buffer(float(buffer_m))
         aoi_wgs = reproject_geom(from_utm, aoi_utm)
     km2 = aoi_utm.area / 1e6
-    if km2 > MAX_AREA_KM2:
+    if km2 > max_area_km2:
         raise GeolensError(f"The area is {km2:,.0f} km2; SSURGO is fetched for "
-                           f"up to {MAX_AREA_KM2:,.0f} km2 at a time.")
+                           f"up to {max_area_km2:,.0f} km2 at a time.")
 
     tiles = _tiles(aoi_wgs)
     note(f"SSURGO: {km2:,.1f} km2 in {len(tiles)} tile(s) from Soil Data Access")

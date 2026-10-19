@@ -185,3 +185,47 @@ def test_plugin_zip_matches_the_folder():
                    if want.get(n) != have.get(n))
     assert not stale, ("the plugin zip is stale (%s); run "
                        "python qgis_plugin/build_plugin_zip.py" % stale)
+
+
+def test_a_portable_release_uses_only_its_own_drive(tmp_path):
+    """A release with its own env runs nothing from the computer: its own
+    Python only, its own geolens, and temp files, caches and the Earthdata
+    login on its drive."""
+    import shutil as _sh
+
+    rel = tmp_path / "drive" / "geolens"
+    (rel / "arcgis_toolbox").mkdir(parents=True)
+    _sh.copyfile(ROOT / "arcgis_toolbox" / "geolens_runner.py",
+                 rel / "arcgis_toolbox" / "geolens_runner.py")
+    (rel / "src" / "geolens").mkdir(parents=True)
+    (rel / "src" / "geolens" / "__init__.py").write_text(
+        '__version__ = "9.9.9"\n')
+    (rel / "env" / "bin").mkdir(parents=True)
+    os.symlink(sys.executable, rel / "env" / "bin" / "python")
+    spec = importlib.util.spec_from_file_location(
+        "portable_runner", rel / "arcgis_toolbox" / "geolens_runner.py")
+    r = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(r)
+
+    py = str(rel / "env" / "bin" / "python")
+    assert r.portable_root() == rel
+    assert r.candidate_pythons("/somewhere/else/python") == [py]
+    env = r.clean_env(py)
+    for k in ("TMP", "TEMP", "LOCALAPPDATA", "MPLCONFIGDIR", "GEOLENS_NETRC"):
+        assert env[k].startswith(str(rel)), k
+    assert env["PYTHONNOUSERSITE"] == "1"
+    info = r.probe(py)
+    assert info["version"] == "9.9.9" and info["code"] == str(rel / "src")
+    assert r.netrc_file() == rel / "home" / "_netrc"
+    r.save_earthdata_login("friend", "pw-1")
+    assert (rel / "home" / "_netrc").read_text().startswith(
+        "machine urs.earthdata.nasa.gov login friend")
+
+
+def test_the_toolbox_runs_the_geolens_beside_it(runner, tmp_path, monkeypatch):
+    fake = tmp_path / "src"
+    (fake / "geolens").mkdir(parents=True)
+    (fake / "geolens" / "__init__.py").write_text('__version__ = "7.7.7"\n')
+    monkeypatch.setattr(runner, "release_src", lambda: fake)
+    info = runner.probe(sys.executable)
+    assert info["version"] == "7.7.7" and info["code"] == str(fake)

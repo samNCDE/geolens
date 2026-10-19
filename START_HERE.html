@@ -153,6 +153,12 @@ two disagree, look. <code>bankfull_method="picker"</code> brings the old behavio
     finds the existing install, updates the code in place, and leaves the
     environment alone.</li>
 </ol>
+<p><strong>Or portable, on an external drive.</strong> Unzip onto the drive and
+double-click <strong><code>setup_portable.bat</code></strong> instead. It puts geolens's own Python
+in <code>env</code> on the drive, about 3 GB, and needs no admin rights. Nothing is
+installed on the computer, and temporary files and caches stay on the
+drive, so the drive can be passed to a colleague whose computer has ArcGIS
+Pro.</p>
 <p><a href="INSTALL.md">INSTALL.md</a> covers the manual route and what to do when the
 install fails.</p>
 <h2>Run it</h2>
@@ -195,12 +201,22 @@ ArcGIS.</p>
     Add Toolbox</em> and choose <code>arcgis_toolbox\geolens.pyt</code> in the geolens
     folder.</li>
 <li><strong>Check it:</strong> run <em>0 Setup ▸ Find the geolens environment</em>. It should
-    report "geolens 0.32.0 found". If it can't find the environment, give it
+    report "geolens 0.33.0 found". If it can't find the environment, give it
     the environment's <code>python.exe</code>, which the installer prints. The tool
-    remembers it.</li>
+    remembers it.
+    <em>0 Setup ▸ Check internet services</em> says which download services this
+    computer can reach.</li>
 <li>
-<p><strong>Run the whole routine</strong> (<em>1 Whole routine</em>), or <strong>one step at a time</strong>
-    (<em>2 Steps</em>):</p>
+<p><strong>A whole project area</strong> (a field office, a ranch): <em>1 Whole routine ▸
+    Run a project area (by HUC12)</em>. Give it the boundary, or a map-service
+    URL and a where clause, plus an empty project folder. It maps valleys and
+    valley types over the whole area at 10 m. Then it does stream types and
+    stable/unstable form one HUC12 at a time where there is 1 m lidar,
+    starting with a pilot of the HUC12s with the most unconfined valley.
+    <code>RESULTS.md</code> in the folder says what ran at what resolution. Run it again
+    to carry on.</p>
+<p><strong>Or run the whole routine</strong> on one DEM (<em>1 Whole routine</em>), or <strong>one step
+at a time</strong> (<em>2 Steps</em>):</p>
 <table>
 <thead>
 <tr>

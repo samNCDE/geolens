@@ -58,7 +58,14 @@ def _pointer() -> str | None:
 
 
 def candidate_pythons(setting: str | None = None) -> list[str]:
-    """Where the geolens environment usually is, most likely first."""
+    """Where the geolens environment usually is, most likely first.
+
+    A portable release's own environment is the only candidate: it must
+    never fall back to (or be shadowed by) an environment on the computer.
+    """
+    own = portable_python()
+    if own:
+        return [own]
     out: list[str] = []
     for v in (setting, os.environ.get("GEOLENS_PYTHON"), _pointer()):
         if v:
@@ -78,6 +85,67 @@ def candidate_pythons(setting: str | None = None) -> list[str]:
     return [p for p in dict.fromkeys(out) if p and Path(p).exists()]
 
 
+def release_src() -> Path | None:
+    """The ``src`` folder of the release this file came with, if any.
+
+    The ArcGIS toolbox sits in a release folder beside ``src``; the geolens
+    it runs is that one, so a toolbox and its geolens can never be different
+    versions, and a new release runs from wherever it was unzipped without
+    re-pointing the environment (which lives on another drive). The QGIS
+    plugin, installed into QGIS's profile, has no ``src`` beside it and uses
+    the environment's own geolens.
+    """
+    here = Path(__file__).resolve().parent
+    for cand in (here.parent / "src", here.parent.parent / "src"):
+        if (cand / "geolens" / "__init__.py").is_file():
+            return cand
+    return None
+
+
+def portable_root() -> Path | None:
+    """The release folder, when it carries its own environment (``env``).
+
+    A portable release (built by ``setup_portable.bat``) runs entirely from
+    its drive: its own Python, and its temporary files, caches and settings
+    in ``home`` and ``tmp`` beside it, so it can be handed to someone else on
+    a hard drive and nothing is written to the computer it is plugged into.
+    """
+    src = release_src()
+    if src is None:
+        return None
+    root = src.parent
+    for py in (root / "env" / "python.exe", root / "env" / "bin" / "python"):
+        if py.is_file():
+            return root
+    return None
+
+
+def portable_python() -> str | None:
+    root = portable_root()
+    if root is None:
+        return None
+    for py in (root / "env" / "python.exe", root / "env" / "bin" / "python"):
+        if py.is_file():
+            return str(py)
+    return None
+
+
+def _portable_env(root: Path) -> dict[str, str]:
+    """Where a portable run keeps what would otherwise go to the computer:
+    temporary files, caches (routing, matplotlib, numba, PROJ grids) and
+    the Earthdata login."""
+    home, tmp = root / "home", root / "tmp"
+    for d in (home, tmp):
+        d.mkdir(parents=True, exist_ok=True)
+    return {"TMP": str(tmp), "TEMP": str(tmp), "TMPDIR": str(tmp),
+            "LOCALAPPDATA": str(home / "cache"),
+            "XDG_CACHE_HOME": str(home / "cache"),
+            "MPLCONFIGDIR": str(home / "matplotlib"),
+            "NUMBA_CACHE_DIR": str(home / "numba"),
+            "PYTHONNOUSERSITE": "1", "GEOLENS_HOME": str(home),
+            "GEOLENS_NETRC": str(home / "_netrc")}
+
+
 def clean_env(python: str, extra: dict[str, str] | None = None
               ) -> dict[str, str]:
     """The environment for the geolens Python: QGIS's settings removed, the
@@ -95,6 +163,12 @@ def clean_env(python: str, extra: dict[str, str] | None = None
                                   + rest)
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
+    src = release_src()
+    if src is not None:
+        env["GEOLENS_SRC"] = str(src)
+    root = portable_root()
+    if root is not None:
+        env.update(_portable_env(root))
     if extra:
         env.update(extra)
     return env
@@ -106,11 +180,20 @@ def _popen_kwargs() -> dict[str, Any]:
     return {}
 
 
-_PROBE = (
+# Both snippets put the release's own src first on the path (GEOLENS_SRC,
+# set by clean_env), ahead of whatever geolens the environment has.
+_SRC_FIRST = (
+    "import os,sys\n"
+    "_s=os.environ.get('GEOLENS_SRC')\n"
+    "if _s and _s not in sys.path: sys.path.insert(0,_s)\n"
+)
+
+_PROBE = _SRC_FIRST + (
     "import json,importlib\n"
-    "out={'version':'','missing':[],'python':__import__('sys').executable}\n"
+    "out={'version':'','missing':[],'python':sys.executable,'code':''}\n"
     "try:\n"
     "    import geolens; out['version']=geolens.__version__\n"
+    "    out['code']=os.path.dirname(os.path.dirname(geolens.__file__))\n"
     "except Exception as e: out['error']=repr(e)\n"
     "for n in ('rasterio','geopandas','shapely','pyproj','numpy','pandas',\n"
     "          'scipy','skimage','numba','pysheds','matplotlib'):\n"
@@ -171,7 +254,7 @@ def find_python(setting: str | None = None, fresh: bool = False
     return None, tried
 
 
-_RUN = (
+_RUN = _SRC_FIRST + (
     "import json,sys\n"
     "import geolens.api as api\n"
     "payload=json.loads(sys.stdin.read())\n"
@@ -321,7 +404,11 @@ EARTHDATA_HOST = "urs.earthdata.nasa.gov"
 
 
 def netrc_file() -> Path:
-    """``%USERPROFILE%\\_netrc`` on Windows, ``~/.netrc`` elsewhere."""
+    """``home\\_netrc`` on a portable release's drive; otherwise
+    ``%USERPROFILE%\\_netrc`` on Windows, ``~/.netrc`` elsewhere."""
+    root = portable_root()
+    if root is not None:
+        return root / "home" / "_netrc"
     return Path.home() / ("_netrc" if os.name == "nt" else ".netrc")
 
 

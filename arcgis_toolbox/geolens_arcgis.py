@@ -19,6 +19,8 @@ import arcpy
 import geolens_runner as runner
 
 CURVES = [
+    ("By location: Moody et al. 2003 province, or generic outside the arid SW",
+     "auto"),
     ("Moody et al. 2003, eastern AZ / NM (arid_sw_nm)", "arid_sw_nm"),
     ("Moody et al. 2003, central and southern AZ (arid_sw_az)", "arid_sw_az"),
     ("Bieger et al. 2015, all US (bieger_us)", "bieger_us"),

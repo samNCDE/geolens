@@ -5,17 +5,26 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.32.0 beta. The full test suite passes on Linux with numba
-0.61.2. The release zip (`geolens_v0.32.0-beta.zip`) and a git bundle
-(`geolens_v0.32.0.bundle`, holding v0.30.0 to v0.32.0, ready to push) are
-in Sam's Claude outputs folder.
+**State.** v0.33.0 beta. The full test suite passes on Linux with numba
+0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
+The release is unzipped at `S:\geolens\gl33`. The zip and a git bundle
+(`geolens_v0.33.0.bundle`, holding v0.30.0 to v0.33.0) are in
+`S:\geolens\Claude outputs`.
+
+**Step list:** the Claude Doc "geolens step list" holds the work queue, for
+Sam to review, approve and edit. Read it before choosing what to do next.
+
+**Tonight (19 Oct, 5 pm Arizona):** the first real project run, the Kingman
+BLM Field Office (`ADM_UNIT_CD='AZC01000'`), into `S:\kingman`. A
+scheduled task starts it in this session. It runs on the existing
+environment unless `setup_portable.bat` succeeds first; nothing goes on C:.
 
 **Not yet done:**
 - **Not pushed to GitHub.** This session's GitHub access was not enabled
   for the repo. To push, create an empty `samNCDE/geolens` repo, then run:
 
   ```
-  git clone -b main geolens_v0.32.0.bundle geolens
+  git clone -b main geolens_v0.33.0.bundle geolens
   cd geolens
   git remote set-url origin https://github.com/samNCDE/geolens.git
   git push -u origin main
@@ -53,6 +62,60 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.33.0 (beta): projects of any size, portable drive, audit fixes
+
+- **Run a project area (by HUC12)** (`project.py`, `api.run_project`,
+  toolbox *1 Whole routine*):
+  - **Level A:** 10 m over the boundary's HUC12s plus those draining into
+    them, for valley types everywhere.
+  - **Level B:** HUC12 by HUC12 on 3DEP 1 m lidar, for stream types,
+    plots and stability. Pilot, all, listed or none.
+  - **Merged layers:** carry the cell size they were measured on;
+    `valley_resolved` flags valleys under three cells wide.
+  - **Records:** `huc12_status` and `RESULTS.md`. The run resumes from
+    `project.json`.
+  - The boundary can be a layer, or an ArcGIS REST layer with a where
+    clause (`query_layer`, paged, safe against servers that ignore paging).
+  - The regional curve is picked by location, with Bieger et al. (2015)
+    outside the arid Southwest.
+- **Portable drive** (`setup_portable.bat`, `start_notebook_portable.bat`):
+  - geolens's own Python is built in `env` with micromamba; nothing is
+    installed on the computer.
+  - The runner uses only that env, and puts TMP, caches and the
+    Earthdata login on the drive.
+  - The toolbox always runs the geolens in its own `src` (`GEOLENS_SRC`), so
+    toolbox and code cannot be different versions, and a release runs
+    wherever it is unzipped, without re-pointing an environment.
+- **Check internet services** (`services.py`, toolbox *0 Setup*).
+- **Regional curves from the report itself.** Sam supplied Moody et al.
+  (2003), `Arid_SW_Report_Regional_Curves.pdf`:
+  - `"auto"` now uses its Figure 2 map: the division near 109.6° W and the
+    study region about 114.0–104.0° W, 31.6–38.1° N. Within a degree
+    outside, the nearest province is used with a warning; beyond that,
+    Bieger.
+  - `"auto"` is the toolbox default in every stream-typing tool.
+  - Both provinces now also carry the report's bankfull cross-sectional
+    area and discharge relations, converted to metric.
+  - The report's "local calibration curve": the regional slope with a local
+    offset fitted to five or more surveyed sites. It is on the step list.
+- **Projects fetch SSURGO** over the boundary. Soils now carry `kwfact`
+  (surface-horizon erodibility), for the Kingman scope of work.
+- **Audit of Sam's real runs** (v28.1: Ruidoso 10 m with 1 m channels, Eagle
+  Creek, Cherokee Bill):
+  - *Fixed:* reaches with no valley bottom (73 of 858 at Ruidoso, 8.5%)
+    were classed "confined" (ratio 0) while the warning said unknown. They
+    are now unknown.
+  - *Fixed:* the notebook set the confinement breaks at each landscape's
+    own 25th and 50th percentiles, so every landscape came out a quarter
+    "confined". At Eagle Creek that made "confined" mean up to 20× the
+    channel width. It now uses the published 2 and 5.
+  - *Found, for the step list:*
+    - The USGS geology called every reach bedrock on all three sites, so
+      no reach was alluvial and valley types collapsed to I/II. Half of
+      Ruidoso's reaches are "check".
+    - 15% of Ruidoso reaches are typed D (braided) on W/D > 40 alone.
+    - 42% of segments are digitised uphill (z_end > z_start).
 
 ## v0.32.0 (beta): SSURGO soils, as a finer geology for valley floors
 

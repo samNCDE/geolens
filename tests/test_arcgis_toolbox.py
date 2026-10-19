@@ -497,3 +497,18 @@ def test_ssurgo_tool_and_geology_choice(tbx):
                             geology="Download USDA SSURGO soils")
     assert mod._geology(v, "unused") == "ssurgo"
     assert "Download USDA SSURGO soils" in v["geology"].filter.list
+
+
+def test_project_and_services_tools(tbx):
+    """Both reach the internet; their runs are tested at the API level
+    (test_project, test_services)."""
+    tool, params, v = _tool(tbx, "RunProject")
+    assert {"boundary", "url", "where", "out_folder", "level_b", "pilot",
+            "huc12s", "geology", "curve", "threshold", "hours", "plots",
+            "out_valley_types", "out_stream_types", "out_sections",
+            "out_stability", "out_huc12", "to_gdb"} <= set(v)
+    assert v["curve"].value.startswith("By location")
+    tool.updateMessages(params)
+    assert v["url"].message                     # no boundary yet: a warning
+    tool, params, v = _tool(tbx, "CheckServices")
+    assert "all_ok" in v

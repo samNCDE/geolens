@@ -148,7 +148,7 @@ def run_landscape(
     """
     # A typo in the curve name would otherwise surface at step 6, after the
     # routing it took an hour to reach.
-    if stream_types and regional_curve is not None:
+    if stream_types and regional_curve not in (None, "auto"):
         from .streamtype import _resolve_curve
         _resolve_curve(regional_curve)
     t0 = time.monotonic()

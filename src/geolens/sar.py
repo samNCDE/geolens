@@ -85,8 +85,12 @@ LOGIN_REFUSED = (
 # -- the login: the user's own netrc file ----------------------------------------
 
 def netrc_path() -> Path:
-    """``%USERPROFILE%\\_netrc`` on Windows, ``~/.netrc`` elsewhere: where
-    NASA's tools, curl and GDAL look for logins."""
+    """``GEOLENS_NETRC`` (a portable release sets it to a file on its own
+    drive), else ``%USERPROFILE%\\_netrc`` on Windows, ``~/.netrc``
+    elsewhere: where NASA's tools, curl and GDAL look for logins."""
+    env = os.environ.get("GEOLENS_NETRC", "").strip()
+    if env:
+        return Path(env)
     return Path.home() / ("_netrc" if os.name == "nt" else ".netrc")
 
 
@@ -177,7 +181,9 @@ def gdal_env() -> dict[str, str]:
     """GDAL settings for reading Earthdata-protected files through /vsicurl/:
     the netrc for the login, and a cookie jar for the session the login
     redirect sets up (without it every read logs in again)."""
-    cookies = Path.home() / ".geolens" / "earthdata_cookies.txt"
+    home = os.environ.get("GEOLENS_HOME", "").strip()
+    cookies = ((Path(home) if home else Path.home() / ".geolens")
+               / "earthdata_cookies.txt")
     cookies.parent.mkdir(parents=True, exist_ok=True)
     return {"GDAL_HTTP_NETRC": "YES",
             "GDAL_HTTP_NETRC_FILE": str(netrc_path()),

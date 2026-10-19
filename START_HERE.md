@@ -75,6 +75,13 @@ two disagree, look. `bankfull_method="picker"` brings the old behaviour back.
    finds the existing install, updates the code in place, and leaves the
    environment alone.
 
+**Or portable, on an external drive.** Unzip onto the drive and
+double-click **`setup_portable.bat`** instead. It puts geolens's own Python
+in `env` on the drive, about 3 GB, and needs no admin rights. Nothing is
+installed on the computer, and temporary files and caches stay on the
+drive, so the drive can be passed to a colleague whose computer has ArcGIS
+Pro.
+
 [INSTALL.md](INSTALL.md) covers the manual route and what to do when the
 install fails.
 
@@ -118,11 +125,22 @@ ArcGIS.
    Add Toolbox* and choose `arcgis_toolbox\geolens.pyt` in the geolens
    folder.
 2. **Check it:** run *0 Setup ▸ Find the geolens environment*. It should
-   report "geolens 0.32.0 found". If it can't find the environment, give it
+   report "geolens 0.33.0 found". If it can't find the environment, give it
    the environment's `python.exe`, which the installer prints. The tool
    remembers it.
-3. **Run the whole routine** (*1 Whole routine*), or **one step at a time**
-   (*2 Steps*):
+   *0 Setup ▸ Check internet services* says which download services this
+   computer can reach.
+3. **A whole project area** (a field office, a ranch): *1 Whole routine ▸
+   Run a project area (by HUC12)*. Give it the boundary, or a map-service
+   URL and a where clause, plus an empty project folder. It maps valleys and
+   valley types over the whole area at 10 m. Then it does stream types and
+   stable/unstable form one HUC12 at a time where there is 1 m lidar,
+   starting with a pilot of the HUC12s with the most unconfined valley.
+   `RESULTS.md` in the folder says what ran at what resolution. Run it again
+   to carry on.
+
+   **Or run the whole routine** on one DEM (*1 Whole routine*), or **one step
+   at a time** (*2 Steps*):
 
    | Tool | What it does |
    |---|---|

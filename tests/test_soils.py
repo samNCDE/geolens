@@ -72,6 +72,12 @@ def fake_sda(log):
                            "pmorder"],
                           [(str(c), k, rv, k, o) for c, k, o, rv in PM
                            if c in keys])
+        if "FROM chorizon" in q:
+            return _table(["cokey", "hzdept_r", "kwfact"],
+                          [(str(c), d, k) for c, d, k in
+                           ((1001, "0", ".32"), (1001, "20", ".10"),
+                            (2001, "0", ".05"), (3001, "0", ".24"))
+                           if c in keys])
         if "FROM cogeomordesc" in q:
             return _table(["cokey", "geomfname", "rvindicator"],
                           [(str(c), f, "Yes") for c, f in LANDFORM
@@ -119,6 +125,7 @@ def test_soils_are_fetched_clipped_and_classed(tmp_path, monkeypatch):
     assert by_key.loc[300, "material_class"] == "mass_movement"
     assert by_key.loc[300, "pmkind"] == "slope alluvium"     # pmorder 1
     assert by_key.loc[100, "brockdepmin"] == 152
+    assert by_key.loc[100, "kwfact"] == pytest.approx(0.32)   # surface horizon
     assert g.unary_union.within(box(*AOI).buffer(1))        # clipped
     assert sum(g["area_km2"]) == pytest.approx(9.0, rel=0.01)
     rec = json.loads((tmp_path / "out" / "soils_dir" /

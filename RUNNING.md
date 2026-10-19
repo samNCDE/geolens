@@ -1005,6 +1005,7 @@ area, clipped to it, with:
 | `pmkind`, `pmgroupname`, `landform` | what SSURGO says, for checking the class |
 | `compname`, `comppct_r` | the dominant component and its share of the map unit |
 | `flodfreqdcd`, `drclassdcd`, `hydgrpdcd`, `brockdepmin` | flooding frequency, drainage class, hydrologic group, depth to bedrock (cm) |
+| `kwfact` | whole-soil erodibility (K) of the dominant soil's surface horizon (v0.33) |
 
 "Slope alluvium" is classed as mass movement, not alluvial: it is hillslope
 wash, and calling it alluvium would put a valley floor on every footslope.
@@ -1017,6 +1018,95 @@ what was asked and the area by material.
 (`tests/test_soils.py`). The SQL follows NRCS's documented tables
 (`mupolygon`, `mapunit`, `muaggatt`, `component`, `copmgrp`, `copm`,
 `cogeomordesc`); the first real run is the test.
+
+### Projects of any size, by HUC12 (v0.33)
+
+A real project is a boundary: a BLM field office, a ranch, a district. At
+1 m the Kingman Field Office (about 23,000 km²) would be some 23 billion
+cells, far beyond one run. A project therefore runs in two levels:
+
+```python
+r = api.run_project(
+    "https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer/3",
+    where="ADM_UNIT_CD='AZC01000'",         # or a polygon layer path
+    level_b="pilot", pilot_count=3)          # run with GEOLENS_OUT = the project folder
+```
+
+| Level | Area | DEM | Results |
+|---|---|---|---|
+| A | the boundary's HUC12s plus the HUC12s draining into them (from the WBD's `tohuc`) | 3DEP 1/3 arc-second, 10 m; coarser only if memory says so | routing, valley bottom, confinement, valley form, valley types, fans |
+| B | one HUC12 at a time | 3DEP 1 m lidar, where it covers at least `lidar_min_fraction` (0.8) of the HUC12 | stream types, section plots, stable / unstable form for the level A reaches inside it |
+
+Level B order:
+
+- `"pilot"`: the HUC12s with lidar and the most unconfined or partly
+  confined valley, where the channel is free to change form;
+- `"all"`, or `"listed"` with `huc12s="150301030201,..."`;
+- `"none"` for valleys only.
+
+`level_b_hours` stops level B cleanly at a time limit.
+
+The project folder holds:
+
+- `project.json`: every step and HUC12, so running the project again
+  carries on where it stopped;
+- `huc12.gpkg`: each HUC12's role and lidar coverage;
+- `A_landscape/` and `B_huc12/<code>/`: the runs;
+- `merged/`: valley types, stream types, sections, stability and
+  `huc12_status`, for the boundary;
+- `RESULTS.md`: what ran at what resolution, and every warning.
+
+**Resolution travels with the results.** Merged valley types carry
+`dem_cell_m`, and `valley_resolved` is false for valleys under three cells
+wide. Stream types carry `fine_dem_cell_m` and the HUC12's `lidar_frac`.
+`huc12_status` says which HUC12s have stream types (`done`), which have no
+lidar (`no lidar`: valleys only), and which are still `queued`.
+
+**Fallbacks.**
+
+- DEM: 1 m lidar where 3DEP has it, otherwise 1/3 arc-second. A 1 arc-second
+  or Copernicus fallback for areas outside 3DEP is on the step list.
+- Geology: USGS, SSURGO (`geology="ssurgo"`) or none.
+- Regional curve: `"auto"` picks the Moody et al. (2003) province from the
+  report's own map (Figure 2):
+  - west of its dashed division near 109.6° W: central and southern
+    Arizona;
+  - east of it: eastern Arizona / New Mexico.
+
+  The report's study region runs about 114.0–104.0° W, 31.6–38.1° N. Within
+  a degree outside it, the nearest province is used with a warning; beyond
+  that, Bieger et al. (2015). `"auto"` is now the toolbox default in every
+  tool that types streams. Other regions' curves are on the step list.
+- The project also fetches SSURGO over the boundary (`soils=True`). It
+  carries composition, hydrologic group and erodibility for the
+  scope-of-work questions on soils.
+
+Drainage areas on rivers entering from outside the HUC8s the project
+touches (the Colorado) are local only, and `RESULTS.md` says so.
+
+### Portable: everything on one drive (v0.33)
+
+`setup_portable.bat` builds `env` (Python and every library) inside the
+release folder with micromamba, a single downloaded program. Downloads,
+package caches and temporary files go to the drive; nothing is installed
+on the computer. When `env` exists:
+
+- the toolbox uses it and nothing else, never an environment on the
+  computer;
+- every run's temporary files, caches (routing fallback, matplotlib, numba,
+  PROJ) and the Earthdata login go in `home` and `tmp` beside it;
+- the toolbox always runs the geolens in its own `src`. The code and the
+  toolbox can never be different versions, and a new release runs from
+  wherever it is unzipped.
+
+`start_notebook_portable.bat` opens the notebook the same way.
+
+### Can this computer reach the services? (v0.33)
+
+`api.check_services()` (toolbox: *0 Setup ▸ Check internet services*) makes
+one small request to each service geolens downloads from: 3DEP, the WBD,
+the national geologic map, SSURGO, NAIP, NASA CMR. It also says whether an
+Earthdata login is saved. Run it before a long project.
 
 ---
 
@@ -1052,6 +1142,8 @@ walk-through.
 | 0 Get data | NAIP imagery and NDVI | `naip_tiles` (NDVI and imagery tiles, NDVI and true-colour mosaics) |
 | 0 Get data | Sentinel-1 radar statistics (OPERA RTC) | `sentinel1_stats` (tiles per pass, per-track and combined statistics, per polygon) |
 | 0 Get data | SSURGO soils | `fetch_soils` (map units with `material_class`, usable as the geology layer) |
+| 0 Setup | Check internet services | `check_services` |
+| 1 Whole routine | Run a project area (by HUC12) | `run_project` (level A at 10 m, level B on lidar by HUC12, merged layers, RESULTS.md; resumable) |
 | 0 Setup | Save Earthdata login | writes your `_netrc` in the toolbox's own Python (the password never goes through geolens) |
 | 1, 2 Steps | Geology: *Download USDA SSURGO soils* | `geology="ssurgo"` |
 | 0 Setup | Find the geolens environment | probes and remembers the environment's `python.exe` |

@@ -1591,6 +1591,55 @@ def naip_tiles(
                true_colour=true_colour, keep_imagery=keep_imagery)
 
 
+def run_project(
+    boundary: str,
+    where: str | None = None,
+    level_b: str = "pilot",
+    pilot_count: int = 3,
+    huc12s: str | None = None,
+    stream_threshold_km2: float = 1.0,
+    geology: str | None = "auto",
+    regional_curve: str | None = "auto",
+    lidar_min_fraction: float = 0.8,
+    section_plots: bool = True,
+    level_b_hours: float | None = None,
+    soils: bool = True,
+) -> dict[str, Any]:
+    """A whole project area, any size: valleys everywhere, channels on lidar.
+
+    ``boundary`` is a polygon layer, or an ArcGIS REST layer URL with
+    ``where`` (a BLM field office, a forest district). Level A runs the whole
+    area at 10 m, widened to the HUC12 watersheds it touches and those
+    draining into them: routing, valley bottoms, confinement, valley types.
+    Level B then runs HUC12 by HUC12 on 3DEP 1 m lidar where it exists:
+    stream types, section plots and stable / unstable form. ``level_b`` is
+    "pilot" (``pilot_count`` HUC12s with the most unconfined valley),
+    "all", "listed" (``huc12s``, comma-separated) or "none". The output
+    folder gets ``merged`` layers, ``RESULTS.md`` (what ran at what
+    resolution, and warnings) and ``project.json``; running the project
+    again carries on where it stopped. ``regional_curve="auto"`` picks the
+    Moody et al. (2003) province from the location, or the generic US curve
+    outside the arid Southwest.
+    """
+    from .project import run_project as _rp
+
+    return _rp(boundary, where=where, level_b=level_b,
+               pilot_count=pilot_count, huc12s=huc12s,
+               stream_threshold_km2=stream_threshold_km2, geology=geology,
+               regional_curve=regional_curve,
+               lidar_min_fraction=lidar_min_fraction,
+               section_plots=section_plots, level_b_hours=level_b_hours,
+               soils=soils)
+
+
+def check_services(timeout: int = 20) -> dict[str, Any]:
+    """Try each service geolens downloads from (3DEP, the WBD, geology,
+    SSURGO, NAIP, NASA) once, and say which this computer can reach."""
+    from .services import check_services as _cs
+
+    return _cs(timeout=timeout)
+
+
 def fetch_soils(aoi: str, buffer_m: float = 0.0) -> dict[str, Any]:
     """USDA SSURGO soil map units over an area, from Soil Data Access.
 
@@ -1896,7 +1945,7 @@ _NO_PERSIST = {
     "sample_features", "plan_landscape_run", "corrections_summary",
     "operator_disagreement", "geology_selftest", "valley_type_reference",
     "inundation_selftest", "calibration_history", "naip_selftest",
-    "huc_selftest",
+    "huc_selftest", "check_services", "earthdata_login_status",
 }
 
 

@@ -122,7 +122,7 @@ class Toolbox(object):
         self.label = "geolens"
         self.alias = "geolens"
         self.tools = [FetchDEM, NaipImagery, Sentinel1Radar, SsurgoSoils,
-                      FindEnvironment,
+                      FindEnvironment, CheckServices, RunProject,
                       SaveEarthdataLogin, CheckMemory, CoarsenDEM, WholeRoutine,
                       Step1Terrain, Step1bCalibrate, Step2ValleyTypes, Step3StreamTypes,
                       Step4Stability, Step5Gullies, Step6Riparian,
@@ -199,6 +199,8 @@ class FindEnvironment(_Tool):
             ga.find_python()
         ver = tried[py].get("version")
         arcpy.AddMessage("geolens %s found:\n  %s" % (ver, py))
+        if tried[py].get("code"):
+            arcpy.AddMessage("  code: %s" % tried[py]["code"])
         warn = geolens_runner.numba_warning(tried[py])
         if warn:
             arcpy.AddWarning(warn)
@@ -884,6 +886,130 @@ class SsurgoSoils(_Tool):
                          % (res.get("polygons"), res.get("map_units"),
                             res.get("km2_by_material")))
         ga.set_output(v, "out_soils", res.get("soils"))
+
+
+class CheckServices(_Tool):
+    label = "Check internet services"
+    category = "0 Setup"
+    description = (
+        "Tries each service geolens downloads from once: USGS 3DEP and the "
+        "Watershed Boundary Dataset, the national geologic map, USDA soils, "
+        "NAIP on the Planetary Computer, NASA's Sentinel-1 catalog, and "
+        "whether an Earthdata login is saved. A few seconds. Run it before a "
+        "long run, or when a download fails, to see which service this "
+        "computer cannot reach.")
+
+    def parameters(self):
+        return [D("All reachable", "all_ok", "GPBoolean")]
+
+    def execute(self, parameters, messages):
+        v = ga.by_name(parameters)
+        res = ga.run("check_services", {}, arcpy.env.scratchFolder,
+                     "checking services")
+        for r in res.get("services", []):
+            line = "%-44s %-4s %5.1fs  %s" % (
+                r["service"], "ok" if r["ok"] else "FAIL", r["seconds"],
+                r["detail"])
+            if r["ok"]:
+                arcpy.AddMessage(line)
+            else:
+                arcpy.AddWarning(line + "   (used by: %s)" % r["used_by"])
+        v["all_ok"].value = bool(res.get("ok"))
+
+
+class RunProject(_Tool):
+    label = "Run a project area (by HUC12)"
+    category = "1 Whole routine"
+    description = (
+        "Any area, any size: a BLM field office, a ranch, a district. Level "
+        "A runs the whole area at 10 m (USGS 3DEP), widened to every HUC12 "
+        "watershed it touches and those draining into them, so no stream is "
+        "cut off at the boundary: valley bottoms, confinement and valley "
+        "types everywhere. Level B then runs one HUC12 at a time on 1 m "
+        "lidar where 3DEP has it: stream types, section plots and stable / "
+        "unstable form. A HUC12 without lidar is reported as valleys only. "
+        "Merged layers, a HUC12 status layer and RESULTS.md (what ran at "
+        "what resolution, and every warning) go in the project folder. "
+        "Run it again on the same folder to carry on where it stopped.")
+
+    LEVEL_B = [("Pilot: the HUC12s with the most unconfined valley", "pilot"),
+               ("Every HUC12 with lidar", "all"),
+               ("Only the HUC12s listed below", "listed"),
+               ("None: valleys only", "none")]
+    CURVES = ga.CURVES
+
+    def parameters(self):
+        return [
+            P("Boundary (polygon layer)", "boundary", "GPFeatureLayer",
+              required=False),
+            P("or a map service layer URL", "url", "GPString",
+              required=False),
+            P("Which features of it (where clause)", "where", "GPString",
+              required=False),
+            P("Project folder", "out_folder", "DEFolder"),
+            P("Level B (stream types on lidar)", "level_b", "GPString",
+              default=self.LEVEL_B[0][0], choices=[c[0] for c in self.LEVEL_B]),
+            P("Pilot HUC12s", "pilot", "GPLong", default=3),
+            P("HUC12 codes, comma-separated (for 'listed')", "huc12s",
+              "GPString", required=False),
+            P("Geology", "geology", "GPString", default=ga.GEOLOGY[0],
+              choices=[ga.GEOLOGY[0], ga.GEOLOGY[3], ga.GEOLOGY[1]]),
+            P("Regional bankfull curve", "curve", "GPString",
+              default=self.CURVES[0][0], choices=[c[0] for c in self.CURVES]),
+            P("Stream threshold, km2", "threshold", "GPDouble", default=1.0,
+              category=OPT),
+            P("Stop level B after this many hours (0 = no limit)", "hours",
+              "GPDouble", default=0.0, category=OPT),
+            P("Section plots", "plots", "GPBoolean", default=True,
+              category=OPT),
+            P("SSURGO soils over the boundary", "soils", "GPBoolean",
+              default=True, category=OPT),
+            D("Valley types", "out_valley_types"),
+            D("Stream types", "out_stream_types"),
+            D("Stream-type sections", "out_sections"),
+            D("Stable / unstable form", "out_stability"),
+            D("HUC12 status", "out_huc12"),
+            D("Soils (SSURGO)", "out_soils"),
+        ]
+
+    def updateMessages(self, parameters):
+        _Tool.updateMessages(self, parameters)
+        v = ga.by_name(parameters)
+        if v["boundary"].value is None and not ga.text(v["url"]):
+            v["url"].setWarningMessage("Give a boundary layer or a map "
+                                       "service layer URL.")
+
+    def execute(self, parameters, messages):
+        v = ga.by_name(parameters)
+        out = ga.text(v["out_folder"])
+        boundary = (ga.vector_path(v["boundary"], out, "boundary")
+                    or ga.text(v["url"]))
+        if not boundary:
+            ga.fail("Give a boundary layer or a map service layer URL.")
+        geo = ga.text(v["geology"])
+        geology = ("ssurgo" if geo == ga.GEOLOGY[3]
+                   else None if geo == ga.GEOLOGY[1] else "auto")
+        res = ga.run("run_project", {
+            "boundary": boundary, "where": ga.text(v["where"]) or None,
+            "level_b": ga.choice(v["level_b"], self.LEVEL_B),
+            "pilot_count": int(v["pilot"].value or 3),
+            "huc12s": ga.text(v["huc12s"]) or None,
+            "stream_threshold_km2": v["threshold"].value or 1.0,
+            "geology": geology,
+            "regional_curve": ga.choice(v["curve"], self.CURVES),
+            "section_plots": bool(v["plots"].value),
+            "level_b_hours": v["hours"].value or None,
+            "soils": bool(v["soils"].value),
+        }, out, "project")
+        arcpy.AddMessage("level B: %s" % res.get("level_b"))
+        arcpy.AddMessage("results: %s" % os.path.join(out, "RESULTS.md"))
+        for name, key in (("out_valley_types", "valley_types"),
+                          ("out_stream_types", "stream_types"),
+                          ("out_sections", "sections"),
+                          ("out_stability", "stability"),
+                          ("out_huc12", "huc12_status"),
+                          ("out_soils", "soils")):
+            ga.set_output(v, name, res.get(key))
 
 
 class SaveEarthdataLogin(_Tool):

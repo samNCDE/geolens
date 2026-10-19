@@ -6,7 +6,7 @@ types, and judges whether each reach's stream type is a **stable or unstable
 form for its valley**. Every channel section it measures comes with a plot you
 can click on the map.
 
-*Beta (v0.32). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
+*Beta (v0.33). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
 or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 
 ---
@@ -20,6 +20,7 @@ or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 | 3. Valley form, alluvial fans, valley types | Sections from floor to divide (width, side slopes, shape), a fan search, and USGS surficial geology give **Rosgen valley types I–XI** and the valley as an area. |
 | 4. Stream types | Five channel sections per reach on the lidar: bankfull at the regional curve's depth (Moody et al. 2003 for AZ/NM), width/depth, entrenchment, slope and sinuosity give a **Rosgen stream type A–G**, with a plot of every section. |
 | 5. Stable or unstable form | Each reach's stream type against its valley type (NRCS NEH 654 TS3E, after Rosgen 1996): **stable**, **unstable**, **check** or **unknown**. |
+| Projects of any size | Give a boundary (a BLM field office, a ranch): the whole area at 10 m for valleys and valley types, widened to the HUC12 watersheds draining into it, then HUC12 by HUC12 on 1 m lidar for stream types and stable/unstable form. Resumable; every layer says what resolution it was measured at. |
 | More | Gullies and headcuts, riparian band from NAIP NDVI, cross-sections along any centerline, watershed clipping, fetching 3DEP DEMs, NAIP imagery and SSURGO soils (finer than the geologic map for valley floors), and Sentinel-1 radar statistics (to tell riparian woodland from irrigated fields). |
 
 ## How much to trust it
@@ -33,6 +34,7 @@ or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 | Gullies, headcuts | **Experimental.** |
 | Sentinel-1 radar statistics | **New; tested offline only.** For an experiment, not yet a classification. |
 | SSURGO soils as geology | **New; tested offline only.** Compare its valley types with the USGS geology's before relying on it. |
+| Project runs (by HUC12) | **New; tested offline only.** The first real run is the Kingman Field Office. |
 
 The reasons, with the numbers behind them, are in [START_HERE.md](START_HERE.md).
 
@@ -55,6 +57,14 @@ Nothing is installed into ArcGIS Pro's own Python. The tools run geolens in
 the environment the installer built, so a DEM too big for memory cannot crash
 ArcGIS. Manual installs and troubleshooting are in [INSTALL.md](INSTALL.md).
 
+**Portable, on an external drive (nothing on the computer).** Unzip the
+release onto the drive and double-click **`setup_portable.bat`**. It builds
+geolens's own Python in `env` beside it (about 3 GB, internet needed once),
+with no installer, registry or user-profile changes. The toolbox then uses
+that `env`, and temporary files, caches and the Earthdata login stay on the
+drive. The drive letter can change, so the drive can be handed to someone
+else. Their computer needs only ArcGIS Pro.
+
 ## Use it
 
 **ArcGIS Pro toolbox** (recommended):
@@ -62,10 +72,12 @@ ArcGIS. Manual installs and troubleshooting are in [INSTALL.md](INSTALL.md).
 - **0 Get data**: fetch a USGS 3DEP DEM (1 m lidar where it exists), NAIP
   imagery and NDVI, SSURGO soils, and Sentinel-1 radar statistics. Tiles and
   mosaics go to a folder you choose.
-- **0 Setup**: find the environment, check memory before a run, coarsen a
-  DEM that won't fit, and save your own NASA Earthdata login (for radar).
+- **0 Setup**: find the environment, check which download services this
+  computer can reach, check memory before a run, coarsen a DEM that won't
+  fit, and save your own NASA Earthdata login (for radar).
 - **1 Whole routine**: every step in one tool, optionally clipped to one
-  watershed first.
+  watershed first; or **Run a project area (by HUC12)** for any boundary,
+  however large.
 - **2 Steps**: the same steps one at a time. Step 1 does the routing once;
   later steps read the run folder, so any step can be redone alone.
 - **3 More tools**: alluvial fans, watershed clipping, headcuts, section
