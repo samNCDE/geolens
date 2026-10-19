@@ -117,6 +117,7 @@ def test_a_project_runs_in_two_levels_and_resumes(stubs, tmp_path):
     report = (out / "RESULTS.md").read_text()
     assert "arid_sw_az" in report or "bieger_us" in report
     assert "30 m" in report
+    assert "| over 20% | 2.66 | 6.64 |" in report               # trust in 10 m
     # The pilot stands for the whole boundary, the HUC12 without lidar too.
     assert status["pilot"]["by"] == "representative"
     assert "## Pilot HUC12s" in report and "| 150100000101 |" in report
@@ -146,7 +147,7 @@ def test_paging_stops_when_a_server_ignores_it(monkeypatch):
             for i in range(3)]
     calls = []
 
-    def get(url, params, timeout):
+    def get(url, params, timeout, tries=3):
         calls.append(params["resultOffset"])
         return {"features": page}             # the same page, every time
 
@@ -269,3 +270,61 @@ def test_soil_shares_by_hydrologic_group():
     assert t.loc["150100000202", "soil_hsg_unknown"] == pytest.approx(1.0)
     assert t.loc["150100000204", "soil_hsg_B"] == pytest.approx(1.0)
     assert t.loc["150100000204", "soil_k"] == pytest.approx(0.30)   # 0.15 / 0.5
+
+
+def _points(n):
+    return [{"type": "Feature", "id": i, "properties": {"a": i},
+             "geometry": {"type": "Point", "coordinates": [0, 0]}}
+            for i in range(n)]
+
+
+URL = "https://example.org/arcgis/rest/services/wbd/MapServer/6"
+
+
+def test_a_slow_server_is_asked_for_smaller_pages(monkeypatch):
+    """The USGS hydrography services time out on big pages."""
+    feats, calls = _points(300), []
+
+    def get(url, params, timeout, tries=3):
+        n, off = params["resultRecordCount"], params["resultOffset"]
+        calls.append(n)
+        if n > 125:
+            raise project.GeolensError("timed out")
+        return {"features": feats[off:off + n]}
+
+    monkeypatch.setattr(project, "_get", get)
+    assert len(project.query_layer(URL)) == 300
+    assert calls == [500, 250, 125, 125, 125]
+
+
+def test_an_error_reply_and_a_server_page_limit(monkeypatch):
+    """ArcGIS reports a query it gave up on as {"error": ...} with HTTP 200,
+    and caps pages at its own limit, saying there is more."""
+    feats, calls = _points(250), []
+
+    def get(url, params, timeout, tries=3):
+        n, off = params["resultRecordCount"], params["resultOffset"]
+        calls.append((n, off))
+        if n > 250:
+            return {"error": {"code": 500,
+                              "message": "Error performing query operation"}}
+        part = feats[off:off + min(n, 100)]          # the server's own cap
+        return {"features": part,
+                "exceededTransferLimit": off + len(part) < len(feats)}
+
+    monkeypatch.setattr(project, "_get", get)
+    assert len(project.query_layer(URL)) == 250
+    assert calls == [(500, 0), (250, 0), (250, 100), (250, 200)]
+
+
+def test_a_server_that_never_answers_is_an_error(monkeypatch):
+    calls = []
+
+    def get(url, params, timeout, tries=3):
+        calls.append((params["resultRecordCount"], tries))
+        raise project.GeolensError("down")
+
+    monkeypatch.setattr(project, "_get", get)
+    with pytest.raises(project.GeolensError, match="down"):
+        project.query_layer(URL)
+    assert calls == [(500, 1), (250, 1), (125, 1), (62, 1), (50, 3)]

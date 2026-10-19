@@ -1123,6 +1123,41 @@ Earthdata login is saved. Run it before a long project.
 
 ---
 
+### Which DEM, and how far to trust it (v0.34.1)
+
+From a no-lidar watershed assessment in northern Arizona (October 2026):
+
+- **Fallback order:**
+  1. 3DEP 1 m lidar where it exists. Check every project: coverage keeps
+     growing.
+  2. 3DEP 1/3 arc-second, 10 m: the free default.
+  3. Copernicus GLO-30 outside 3DEP coverage. It is a surface model on
+     EGM2008: shift it to NAVD88 (about ±1 m), and expect +0.2 to 0.4 m of
+     canopy in pinyon-juniper.
+  4. Paid DEMs by need: WorldDEM Neo at 5 m, or tri-stereo imagery with
+     ground control for about 1 m.
+  5. For any channel design: drone photogrammetry with RTK checkpoints, or
+     a survey.
+- **Accuracy of the 10 m DEM without lidar**, against 6,156 ICESat-2 ground
+  points (NMAD / LE90, m): 0.23 / 0.66 on 0 to 10% slopes, 0.99 / 2.43 on
+  10 to 20%, 2.66 / 6.64 over 20%. GLO-30 was worse in every class (0.44 /
+  1.38 on flats). Every project's `RESULTS.md` carries this table. The
+  steep-slope figures are pessimistic: ICESat-2 smooths steep ground over
+  100 m.
+- **Without lidar, the 10 m DEM predates recent incision:** it comes from
+  older photogrammetry or contours. Field-check headcuts and active reaches
+  before trusting a 10 m long profile.
+- **Not for commercial work:** FABDEM and FathomDEM (CC BY-NC-SA). **Not
+  worth it:** topography from repeat-pass radar (Sentinel-1, NISAR). Short
+  baselines, the atmosphere and layover make it worse than the free DEMs;
+  it is for ground movement. Single-pass radar topography already exists
+  as TanDEM-X (GLO-30, WorldDEM).
+- **Slow map services:** geolens asks ArcGIS services for 500 features a
+  page, and halves the page when a server stalls or answers with an error.
+
+Not yet in geolens: the GLO-30 fallback and an ICESat-2 check (on the step
+list).
+
 ## 3. Run it in a notebook
 
 ```bash

@@ -5,10 +5,10 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.34.0 beta. The full test suite passes on Linux with numba
+**State.** v0.34.1 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
 The release is unzipped at `S:\geolens\gl33` (the folder name stayed). The
-zip and a git bundle (`geolens_v0.34.0.bundle`, holding v0.30.0 to v0.34.0)
+zip and a git bundle (`geolens_v0.34.1.bundle`, holding v0.30.0 to v0.34.1)
 are in `S:\geolens\Claude outputs`.
 
 **Step list:** the Claude Doc "geolens step list" holds the work queue, for
@@ -68,6 +68,31 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.34.1 (beta): lessons from the no-lidar watershed work
+
+Sam's notes from another project (no lidar; a watershed data package built
+in a separate chat) are in the geolens project's knowledge and in
+`S:\geolens\notes`. They stay out of this repo because they name a client
+and contacts. Taken in now, because they bear on tonight's run:
+
+- **Slow map services** (`query_layer`): 500 features a page instead of
+  1,000, a 120 s timeout, and a page that fails, or comes back as an ArcGIS
+  `{"error": ...}` reply with HTTP 200, is asked for again at half the size,
+  down to 50. Paging follows `exceededTransferLimit`, so a server whose own
+  page limit is below ours is read to the end.
+- **How far to trust the 10 m DEM:** `RESULTS.md` carries the ICESat-2
+  accuracy of 10 m 3DEP without lidar by slope class (LE90 0.66 m on 0 to
+  10%, 2.43 m on 10 to 20%, 6.64 m over 20%), and says that 10 m 3DEP
+  without lidar predates recent incision and headcuts.
+- RUNNING.md: "Which DEM, and how far to trust it": the fallback order,
+  licences, and why not radar topography.
+
+Next, on the step list for Sam's approval: the rest of the watershed data
+package (RAP vegetation trend, fire history, PRISM and Atlas 14, ecological
+sites, NHDPlus HR, wetlands, gauges, the GLO-30 fallback, an ICESat-2 check,
+roads and crossings, stock tanks), ideally ported from Sam's tested
+`data_prep.py`.
 
 ## v0.34.0 (beta): a pilot that represents the whole area
 
