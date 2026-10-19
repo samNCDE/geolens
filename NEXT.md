@@ -5,11 +5,11 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.33.1 beta. The full test suite passes on Linux with numba
+**State.** v0.34.0 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
-The release is unzipped at `S:\geolens\gl33`. The zip and a git bundle
-(`geolens_v0.33.1.bundle`, holding v0.30.0 to v0.33.1) are in
-`S:\geolens\Claude outputs`.
+The release is unzipped at `S:\geolens\gl33` (the folder name stayed). The
+zip and a git bundle (`geolens_v0.34.0.bundle`, holding v0.30.0 to v0.34.0)
+are in `S:\geolens\Claude outputs`.
 
 **Step list:** the Claude Doc "geolens step list" holds the work queue, for
 Sam to review, approve and edit. Read it before choosing what to do next.
@@ -18,6 +18,12 @@ Sam to review, approve and edit. Read it before choosing what to do next.
 BLM Field Office (`ADM_UNIT_CD='AZC01000'`), into `S:\kingman`. A
 scheduled task starts it in this session. It runs on the existing
 environment unless `setup_portable.bat` succeeds first; nothing goes on C:.
+**Scope (Sam, 19 Oct):** a landscape-scale vegetation management project
+looking at geomorphology, not stream restoration. So the core product is
+level A and soils over the whole field office, summarized by subwatershed,
+soil type and channel type, and the level B pilot is *representative*
+(v0.34.0), not the most unconfined valley. If BLM sends planned treatment
+areas, centre the pilot and the summaries on them.
 
 **Not yet done:**
 - **GitHub: Sam pushes it.** The repo `github.com/samNCDE/geolens` exists
@@ -62,6 +68,34 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.34.0 (beta): a pilot that represents the whole area
+
+Sam, on Kingman: "a landscape scale veg management project looking at
+geomorphology". A pilot in the most unconfined valleys suits stream work,
+not a landscape plan, whose 1 m results must scale up to the whole area.
+
+- `run_project(pilot_by=...)`, and a choice in the toolbox's *Level B*
+  list:
+  - **`"representative"`** (now the default; landscape projects): every
+    HUC12 inside the boundary gets a profile, its stream length by valley
+    type (level A) and its area by soil hydrologic group plus surface
+    erodibility K (SSURGO, sampled on a grid of about 300 points per
+    HUC12). The shares in each block sum to one, so neither block outweighs
+    the other. PAM k-medoids, weighted by the area inside the boundary,
+    sorts them into `pilot_count` groups. Each group's most typical HUC12
+    that has lidar and is mostly inside the boundary runs.
+  - **`"unconfined"`** (stream projects): the old rule.
+- `huc12_status` gets `pilot_group`: the pilot whose level B results stand
+  for each HUC12, the ones without lidar included. `RESULTS.md` lists the
+  pilots and the share of the area each stands for. `project.json` keeps
+  the plan.
+- Without valley types, the profile uses confinement; without either, the
+  HUC12s' area alone.
+- Tests: the medoids, the representative pick (a typical canyon and a
+  typical basin out of six HUC12s plus a sliver), a pilot without lidar,
+  the fallbacks, soil groups (dual groups count as D), the toolbox choice,
+  and the project run.
 
 ## v0.33.1 (beta): Windows line endings for the batch files
 

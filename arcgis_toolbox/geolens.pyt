@@ -927,12 +927,18 @@ class RunProject(_Tool):
         "cut off at the boundary: valley bottoms, confinement and valley "
         "types everywhere. Level B then runs one HUC12 at a time on 1 m "
         "lidar where 3DEP has it: stream types, section plots and stable / "
-        "unstable form. A HUC12 without lidar is reported as valleys only. "
+        "unstable form. A pilot either represents the whole area (HUC12s "
+        "grouped by valley types and soils; each group's most typical one "
+        "runs) or goes where the valleys are most unconfined. A HUC12 "
+        "without lidar is reported as valleys only. "
         "Merged layers, a HUC12 status layer and RESULTS.md (what ran at "
         "what resolution, and every warning) go in the project folder. "
         "Run it again on the same folder to carry on where it stopped.")
 
-    LEVEL_B = [("Pilot: the HUC12s with the most unconfined valley", "pilot"),
+    LEVEL_B = [("Pilot: HUC12s that together represent the area "
+                "(landscape projects)", "pilot:representative"),
+               ("Pilot: the HUC12s with the most unconfined valley "
+                "(stream projects)", "pilot:unconfined"),
                ("Every HUC12 with lidar", "all"),
                ("Only the HUC12s listed below", "listed"),
                ("None: valleys only", "none")]
@@ -989,10 +995,13 @@ class RunProject(_Tool):
         geo = ga.text(v["geology"])
         geology = ("ssurgo" if geo == ga.GEOLOGY[3]
                    else None if geo == ga.GEOLOGY[1] else "auto")
+        level_b, _, pilot_by = ga.choice(v["level_b"],
+                                         self.LEVEL_B).partition(":")
         res = ga.run("run_project", {
             "boundary": boundary, "where": ga.text(v["where"]) or None,
-            "level_b": ga.choice(v["level_b"], self.LEVEL_B),
+            "level_b": level_b,
             "pilot_count": int(v["pilot"].value or 3),
+            "pilot_by": pilot_by or "representative",
             "huc12s": ga.text(v["huc12s"]) or None,
             "stream_threshold_km2": v["threshold"].value or 1.0,
             "geology": geology,

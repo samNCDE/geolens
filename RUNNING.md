@@ -1029,7 +1029,8 @@ cells, far beyond one run. A project therefore runs in two levels:
 r = api.run_project(
     "https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer/3",
     where="ADM_UNIT_CD='AZC01000'",         # or a polygon layer path
-    level_b="pilot", pilot_count=3)          # run with GEOLENS_OUT = the project folder
+    level_b="pilot", pilot_count=3,          # run with GEOLENS_OUT = the project folder
+    pilot_by="representative")               # or "unconfined" for stream projects
 ```
 
 | Level | Area | DEM | Results |
@@ -1039,8 +1040,19 @@ r = api.run_project(
 
 Level B order:
 
-- `"pilot"`: the HUC12s with lidar and the most unconfined or partly
-  confined valley, where the channel is free to change form;
+- `"pilot"`: `pilot_count` HUC12s with lidar, chosen by `pilot_by`:
+  - `"representative"` (the default; landscape projects such as a
+    vegetation management plan): the HUC12s inside the boundary are sorted
+    into `pilot_count` groups of similar watersheds by their stream length
+    in each valley type and their area in each soil hydrologic group, plus
+    the surface soil's erodibility (K), each weighted by its area inside the
+    boundary. Each group's most typical HUC12 with lidar, mostly inside the
+    boundary, is a pilot. `huc12_status` gets `pilot_group`, the pilot that
+    stands for each HUC12, and `RESULTS.md` says how much of the area each
+    pilot stands for: until the rest are run, a pilot's results are the
+    first estimate for its group;
+  - `"unconfined"` (stream projects): the HUC12s with the most unconfined
+    or partly confined valley, where the channel is free to change form;
 - `"all"`, or `"listed"` with `huc12s="150301030201,..."`;
 - `"none"` for valleys only.
 

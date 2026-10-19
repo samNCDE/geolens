@@ -125,7 +125,7 @@ ArcGIS.
    Add Toolbox* and choose `arcgis_toolbox\geolens.pyt` in the geolens
    folder.
 2. **Check it:** run *0 Setup ▸ Find the geolens environment*. It should
-   report "geolens 0.33.1 found". If it can't find the environment, give it
+   report "geolens 0.34.0 found". If it can't find the environment, give it
    the environment's `python.exe`, which the installer prints. The tool
    remembers it.
    *0 Setup ▸ Check internet services* says which download services this
@@ -135,7 +135,9 @@ ArcGIS.
    URL and a where clause, plus an empty project folder. It maps valleys and
    valley types over the whole area at 10 m. Then it does stream types and
    stable/unstable form one HUC12 at a time where there is 1 m lidar,
-   starting with a pilot of the HUC12s with the most unconfined valley.
+   starting with a pilot: a few HUC12s that together represent the area
+   (by valley types and soils), or, for stream projects, the HUC12s with the
+   most unconfined valley.
    `RESULTS.md` in the folder says what ran at what resolution. Run it again
    to carry on.
 

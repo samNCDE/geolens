@@ -1596,6 +1596,7 @@ def run_project(
     where: str | None = None,
     level_b: str = "pilot",
     pilot_count: int = 3,
+    pilot_by: str = "representative",
     huc12s: str | None = None,
     stream_threshold_km2: float = 1.0,
     geology: str | None = "auto",
@@ -1613,8 +1614,11 @@ def run_project(
     draining into them: routing, valley bottoms, confinement, valley types.
     Level B then runs HUC12 by HUC12 on 3DEP 1 m lidar where it exists:
     stream types, section plots and stable / unstable form. ``level_b`` is
-    "pilot" (``pilot_count`` HUC12s with the most unconfined valley),
-    "all", "listed" (``huc12s``, comma-separated) or "none". The output
+    "pilot" (``pilot_count`` HUC12s), "all", "listed" (``huc12s``,
+    comma-separated) or "none". ``pilot_by`` chooses the pilot:
+    "representative" (landscape projects: HUC12s that together stand for the
+    whole area, by valley types and soils, so their results scale up) or
+    "unconfined" (stream projects: the most unconfined valley). The output
     folder gets ``merged`` layers, ``RESULTS.md`` (what ran at what
     resolution, and warnings) and ``project.json``; running the project
     again carries on where it stopped. ``regional_curve="auto"`` picks the
@@ -1624,7 +1628,7 @@ def run_project(
     from .project import run_project as _rp
 
     return _rp(boundary, where=where, level_b=level_b,
-               pilot_count=pilot_count, huc12s=huc12s,
+               pilot_count=pilot_count, pilot_by=pilot_by, huc12s=huc12s,
                stream_threshold_km2=stream_threshold_km2, geology=geology,
                regional_curve=regional_curve,
                lidar_min_fraction=lidar_min_fraction,

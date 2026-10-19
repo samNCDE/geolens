@@ -456,6 +456,26 @@ def test_every_geolens_call_matches_the_api():
     assert calls >= 15
 
 
+def test_project_tool_passes_the_pilot_choice(tbx, tmp_path, monkeypatch):
+    """Landscape projects (the default) and stream projects choose their
+    level B pilot differently; the choice reaches run_project."""
+    mod, _ = tbx
+    seen = []
+    monkeypatch.setattr(mod.ga, "run",
+                        lambda fn, kw, *a, **k: seen.append((fn, kw)) or {})
+    labels = [c[0] for c in mod.RunProject.LEVEL_B]
+    assert labels[0].startswith("Pilot: HUC12s that together represent")
+    for label in labels[:3]:
+        tool, params, v = _tool(
+            tbx, "RunProject", out_folder=str(tmp_path), level_b=label,
+            url="https://example.org/arcgis/rest/services/x/MapServer/3")
+        tool.execute(params, None)
+    assert [(fn, kw["level_b"], kw["pilot_by"]) for fn, kw in seen] == [
+        ("run_project", "pilot", "representative"),
+        ("run_project", "pilot", "unconfined"),
+        ("run_project", "all", "representative")]
+
+
 def test_save_earthdata_login_tool(tbx, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))

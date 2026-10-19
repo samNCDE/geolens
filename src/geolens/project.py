@@ -217,6 +217,24 @@ def _union(g):
             else g.geometry.unary_union)
 
 
+def _read_or_none(path, columns=None):
+    """A vector layer (only ``columns``, when it has them), or None when
+    there is none or it cannot be read."""
+    import geopandas as gpd
+
+    if not path or not Path(str(path)).exists():
+        return None
+    try:
+        if columns:
+            try:
+                return gpd.read_file(str(path), columns=columns)
+            except Exception:                                # noqa: BLE001
+                pass
+        return gpd.read_file(str(path))
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
 # -- HUC12s ------------------------------------------------------------------------
 
 def project_huc12s(boundary_wgs, timeout: int = 60):
@@ -342,10 +360,214 @@ def _pilot_order(hucs, reaches) -> list[str]:
     return list(hucs.sort_values("score", ascending=False)["huc12"])
 
 
+# How level B's pilot is chosen. "representative" (landscape projects: a
+# vegetation management plan, a watershed assessment): the HUC12s that together
+# stand for the whole area, so their results scale up. "unconfined" (stream
+# projects): the HUC12s with the most unconfined valley.
+PILOT_BY = ("representative", "unconfined")
+_HSG = {"A": "A", "B": "B", "C": "C", "D": "D",
+        "A/D": "D", "B/D": "D", "C/D": "D"}       # dual groups: undrained
+_K_SCALE = 0.5            # SSURGO K factor runs about 0.02 to 0.64
+
+
+def _length_shares(lines, col: str, polys, prefix: str):
+    """Share of each HUC12's stream length in each class of ``col`` (lines
+    are placed by their midpoint; unclassed reaches count as "unresolved")."""
+    import geopandas as gpd
+    import numpy as np
+
+    pts = gpd.GeoDataFrame(
+        {"cls": lines[col].astype(object).where(lines[col].notna(), None),
+         "len": lines.geometry.length.to_numpy()},
+        geometry=lines.geometry.centroid, crs=lines.crs)
+    pts["cls"] = [str(c) if c not in (None, "", "None", "nan") else "unresolved"
+                  for c in pts["cls"]]
+    j = gpd.sjoin(pts, polys[["huc12", "geometry"]].to_crs(pts.crs),
+                  predicate="within")
+    if j.empty:
+        return None
+    t = j.pivot_table(index="huc12", columns="cls", values="len",
+                      aggfunc="sum", fill_value=0.0)
+    t = t.div(t.sum(axis=1).replace(0.0, np.nan), axis=0).fillna(0.0)
+    t.columns = [f"{prefix}{c}" for c in t.columns]
+    return t
+
+
+def _soil_shares(soils, polys, per_huc: int = 300):
+    """Share of each HUC12's area in each soil hydrologic group, and the
+    area-weighted surface erodibility (K), from a regular grid of about
+    ``per_huc`` points per HUC12 dropped on the SSURGO polygons."""
+    import geopandas as gpd
+    import numpy as np
+    import pandas as pd
+    import shapely
+
+    polys = polys.to_crs(soils.crs)
+    xs, ys, codes = [], [], []
+    for code, geom in zip(polys["huc12"].astype(str), polys.geometry):
+        if geom is None or geom.is_empty:
+            continue
+        x0, y0, x1, y1 = geom.bounds
+        step = max(((x1 - x0) * (y1 - y0) / per_huc) ** 0.5, 1e-9)
+        gx, gy = np.meshgrid(np.arange(x0 + step / 2, x1, step),
+                             np.arange(y0 + step / 2, y1, step))
+        gx, gy = gx.ravel(), gy.ravel()
+        ok = shapely.contains_xy(geom, gx, gy)
+        xs.append(gx[ok])
+        ys.append(gy[ok])
+        codes += [code] * int(ok.sum())
+    if not codes:
+        return None
+    pts = gpd.GeoDataFrame({"huc12": codes},
+                           geometry=gpd.points_from_xy(np.concatenate(xs),
+                                                       np.concatenate(ys)),
+                           crs=soils.crs)
+    keep = [c for c in ("hydgrpdcd", "kwfact") if c in soils.columns]
+    j = gpd.sjoin(pts, soils[keep + ["geometry"]], predicate="within",
+                  how="left")
+    j = j[~j.index.duplicated(keep="first")]
+    grp = (j["hydgrpdcd"] if "hydgrpdcd" in j else pd.Series(None, index=j.index))
+    j["hsg"] = [_HSG.get(str(g).strip().upper(), "unknown") for g in grp]
+    t = pd.crosstab(j["huc12"], j["hsg"], normalize="index")
+    t.columns = [f"soil_hsg_{c}" for c in t.columns]
+    if "kwfact" in j:
+        k = pd.to_numeric(j["kwfact"], errors="coerce").groupby(j["huc12"]).mean()
+        t["soil_k"] = (k / _K_SCALE).clip(0.0, 1.5).reindex(t.index)
+    return t
+
+
+def _huc_profiles(hucs, valley_types=None, reaches=None, soils=None):
+    """What each HUC12 is made of, as numbers from 0 to about 1:
+
+    - its stream length by Rosgen valley type (level A), or by confinement
+      where there are no valley types;
+    - its area by soil hydrologic group (SSURGO A to D: how much rain runs
+      off) and its surface soil's erodibility (K), when soils were fetched.
+
+    The shares in each block sum to one, so no block outweighs another.
+    Returns the profiles, indexed by HUC12 code, and the blocks used."""
+    import pandas as pd
+
+    parts, basis = [], []
+    if valley_types is not None and len(valley_types) \
+            and "valley_type" in valley_types.columns:
+        t = _length_shares(valley_types, "valley_type", hucs, "valley_")
+        if t is not None:
+            parts.append(t)
+            basis.append("stream length by valley type")
+    elif reaches is not None and len(reaches) and "confinement" in reaches.columns:
+        t = _length_shares(reaches, "confinement", hucs, "confinement_")
+        if t is not None:
+            parts.append(t)
+            basis.append("stream length by confinement")
+    if soils is not None and len(soils):
+        t = _soil_shares(soils, hucs)
+        if t is not None:
+            parts.append(t)
+            basis.append("area by soil hydrologic group" +
+                         (" and soil erodibility (K)" if "soil_k" in t else ""))
+    index = hucs["huc12"].astype(str)
+    if not parts:
+        return pd.DataFrame(index=index), basis
+    prof = pd.concat(parts, axis=1).reindex(index)
+    # A HUC12 with no reaches or no soils data sits at the average.
+    prof = prof.fillna(prof.mean()).fillna(0.0)
+    return prof, basis
+
+
+def _medoids(D, w, k: int, allowed=None, iters: int = 100):
+    """``k`` medoids of a distance matrix with point weights (PAM: a greedy
+    build, then each group's medoid moved to its most central member until
+    nothing changes). Only ``allowed`` points can be medoids. Deterministic.
+    Returns the medoid indices and each point's group (index into them)."""
+    import numpy as np
+
+    n = len(D)
+    allowed = np.ones(n, bool) if allowed is None else np.asarray(allowed, bool)
+    k = int(min(k, allowed.sum()))
+    if k <= 0:
+        return [], np.zeros(n, int)
+    med: list[int] = []
+    dmin = np.full(n, np.inf)
+    for _ in range(k):
+        cost = (w[:, None] * np.minimum(dmin[:, None], D)).sum(axis=0)
+        cost[~allowed] = np.inf
+        cost[med] = np.inf
+        j = int(np.argmin(cost))
+        med.append(j)
+        dmin = np.minimum(dmin, D[:, j])
+    for _ in range(iters):
+        lab = np.argmin(D[:, med], axis=1)
+        new = []
+        for g in range(k):
+            idx = np.flatnonzero((lab == g) & allowed)
+            members = np.flatnonzero(lab == g)
+            if idx.size == 0:
+                new.append(med[g])
+                continue
+            cost = (D[np.ix_(idx, members)] * w[members][None, :]).sum(axis=1)
+            new.append(int(idx[np.argmin(cost)]))
+        if new == med:
+            break
+        med = new
+    return med, np.argmin(D[:, med], axis=1)
+
+
+def _representative_pilot(hucs, k: int, can_run=None, valley_types=None,
+                          reaches=None, soils=None, min_inside: float = 0.5):
+    """The ``k`` HUC12s that together best stand for ``hucs``.
+
+    The HUC12s are sorted into ``k`` groups of similar watersheds by their
+    profiles (``_huc_profiles``), each weighted by its area inside the
+    boundary, and each group's most typical HUC12 (its medoid) is a pilot.
+    Only a HUC12 in ``can_run`` (lidar) and at least ``min_inside`` inside
+    the boundary can stand for a group. Returns the order (pilots first,
+    largest group first) and the plan: each pilot, the HUC12s it stands for,
+    and their area."""
+    import numpy as np
+
+    hucs = hucs.copy()
+    hucs["huc12"] = hucs["huc12"].astype(str)
+    hucs = hucs.sort_values("huc12").reset_index(drop=True)
+    km2 = (hucs["areasqkm"].astype(float).fillna(0.0)
+           * hucs["in_boundary"].astype(float).fillna(0.0)).to_numpy()
+    runnable = set(hucs["huc12"]) if can_run is None else \
+        {str(c) for c in can_run}
+    allowed = np.array([c in runnable for c in hucs["huc12"]])
+    mostly_in = allowed & (hucs["in_boundary"].astype(float).to_numpy()
+                           >= min_inside)
+    if mostly_in.any():
+        allowed = mostly_in
+    prof, basis = _huc_profiles(hucs, valley_types, reaches, soils)
+    X = prof.to_numpy(dtype=float) if prof.shape[1] else \
+        np.zeros((len(hucs), 1))
+    D = np.sqrt(((X[:, None, :] - X[None, :, :]) ** 2).sum(axis=-1))
+    w = km2 / km2.sum() if km2.sum() > 0 else np.full(len(hucs), 1 / len(hucs))
+    med, lab = _medoids(D, w, k, allowed)
+    codes = list(hucs["huc12"])
+    names = dict(zip(codes, hucs.get("name", hucs["huc12"]).astype(str)))
+    groups = []
+    for g, m in enumerate(med):
+        members = [codes[i] for i in np.flatnonzero(lab == g)]
+        area = float(km2[lab == g].sum())
+        groups.append({"huc12": codes[m], "name": names[codes[m]],
+                       "members": members, "km2": round(area, 1),
+                       "share": round(area / km2.sum(), 3) if km2.sum() else None})
+    groups.sort(key=lambda r: -r["km2"])
+    pilots = [r["huc12"] for r in groups]
+    rest = [codes[i] for i in np.argsort(-km2, kind="stable")
+            if allowed[i] and codes[i] not in pilots]
+    plan = {"by": "representative", "basis": basis or ["area only"],
+            "groups": groups,
+            "group_of": {c: r["huc12"] for r in groups for c in r["members"]}}
+    return pilots + rest, plan
+
+
 # -- the run -----------------------------------------------------------------------
 
 def run_project(boundary: str, where: str | None = None,
                 level_b: str = "pilot", pilot_count: int = 3,
+                pilot_by: str = "representative",
                 huc12s: str | list | None = None,
                 stream_threshold_km2: float = 1.0,
                 geology: str | None = "auto",
@@ -358,12 +580,18 @@ def run_project(boundary: str, where: str | None = None,
                 timeout: int = 60,
                 guard: Guard | None = None) -> dict[str, Any]:
     """Level A over the whole area, level B by HUC12, merged layers, a
-    report. See the module docstring. ``level_b``: "pilot" (the
-    ``pilot_count`` HUC12s with lidar and the most unconfined valley),
-    "all", "listed" (``huc12s``) or "none". Resumes a project folder that
-    already has a ``project.json``."""
+    report. See the module docstring. ``level_b``: "pilot" (``pilot_count``
+    HUC12s with lidar, chosen by ``pilot_by``), "all", "listed"
+    (``huc12s``) or "none". ``pilot_by``: "representative" (HUC12s that
+    together stand for the whole area, for landscape projects) or
+    "unconfined" (the most unconfined valley, for stream projects). Resumes a
+    project folder that already has a ``project.json``."""
     import geopandas as gpd
 
+    pilot_by = (pilot_by or "representative").lower()
+    if pilot_by not in PILOT_BY:
+        raise GeolensError(f"pilot_by must be one of {', '.join(PILOT_BY)}, "
+                           f"not {pilot_by!r}.")
     guard = guard or Guard.from_env()
     root = Path(guard.out_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -489,7 +717,18 @@ def run_project(boundary: str, where: str | None = None,
     elif mode == "all":
         want = list(with_lidar["huc12"])
     elif mode == "pilot":
-        order = _pilot_order(with_lidar, reaches)
+        if pilot_by == "unconfined":
+            order = _pilot_order(with_lidar, reaches)
+            st.data["pilot"] = {"by": "unconfined"}
+        else:
+            note("project: choosing pilot HUC12s that represent the area")
+            order, st.data["pilot"] = _representative_pilot(
+                inside, int(pilot_count), can_run=with_lidar["huc12"],
+                valley_types=_read_or_none(pa.get("valley_types")),
+                reaches=reaches,
+                soils=_read_or_none((st.step("soils") or {}).get("path"),
+                                    columns=["hydgrpdcd", "kwfact"]))
+        st.save()
         done_b = [h for h, v in st.data["huc12"].items()
                   if v.get("status") == "done"]
         want = done_b + [h for h in order if h not in done_b]
@@ -662,6 +901,10 @@ def _merge(root: Path, st: _Status, hucs, bnd, pa: dict, cell_a: float,
             "lidar_frac", [float("nan")] * len(status)))]
     status["reaches_b"] = [st.data["huc12"].get(c, {}).get("reaches")
                            for c in status["huc12"]]
+    group_of = (st.data.get("pilot") or {}).get("group_of") or {}
+    if group_of:
+        # The pilot HUC12 whose level B results stand for this one.
+        status["pilot_group"] = [group_of.get(str(c)) for c in status["huc12"]]
     path = mdir / "huc12_status.gpkg"
     status.to_file(str(path), driver="GPKG", layer="huc12_status")
     out["huc12_status"] = str(path)
@@ -689,9 +932,39 @@ def _report(root: Path, st: _Status, merged: dict, cell_a: float,
         f"Regional bankfull curve: `{curve}` ({why_curve}).", "",
         "## Level B by HUC12", "",
         ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())) or "none run",
-        "", "## Layers", ""]
+        ""]
+    lines += _pilot_lines(st.data.get("pilot") or {})
+    lines += ["## Layers", ""]
     lines += [f"- `{k}`: {v}" for k, v in merged.items()]
     if st.data["warnings"]:
         lines += ["", "## Warnings", ""]
         lines += [f"- {w}" for w in st.data["warnings"]]
     (root / "RESULTS.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _pilot_lines(plan: dict) -> list[str]:
+    """RESULTS.md: how the pilot HUC12s were chosen, and what each stands for."""
+    if plan.get("by") == "unconfined":
+        return ["## Pilot HUC12s", "",
+                "The HUC12s with lidar and the most unconfined or partly "
+                "confined valley, where the channel is free to change form.", ""]
+    groups = plan.get("groups") or []
+    if plan.get("by") != "representative" or not groups:
+        return []
+    basis = " and ".join(plan.get("basis") or ["area"])
+    out = ["## Pilot HUC12s", "",
+           f"The HUC12s inside the boundary were sorted into {len(groups)} "
+           f"group{'s' if len(groups) != 1 else ''} of similar watersheds by "
+           f"{basis}, each weighted by its "
+           f"area inside the boundary. Each pilot is its group's most typical "
+           f"HUC12 with lidar. Until the rest are run, read a pilot's level B "
+           f"results as the first estimate for its group (`pilot_group` in "
+           f"`huc12_status`).", "",
+           "| Pilot HUC12 | Name | Stands for | Share of the area |",
+           "|---|---|---|---|"]
+    for g in groups:
+        share = "" if g.get("share") is None else f"{100 * g['share']:.0f}% "
+        n = len(g["members"])
+        out.append(f"| {g['huc12']} | {g['name']} | {n} "
+                   f"HUC12{'s' if n != 1 else ''} | {share}({g['km2']:,.0f} km²) |")
+    return out + [""]
