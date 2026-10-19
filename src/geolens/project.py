@@ -602,7 +602,7 @@ def run_project(boundary: str, where: str | None = None,
                 pilot_by: str = "representative",
                 huc12s: str | list | None = None,
                 stream_threshold_km2: float = 1.0,
-                geology: str | None = "auto",
+                geology: str | None = "ssurgo",
                 regional_curve: str | None = "auto",
                 lidar_min_fraction: float = 0.8,
                 section_plots: bool = True,
@@ -703,27 +703,10 @@ def run_project(boundary: str, where: str | None = None,
     plan_a = st.step("plan_a")
     dem_run, cell_a = plan_a["dem"], float(plan_a["cell_m"])
 
-    # 4. level A pass --------------------------------------------------------------------
-    if not st.step("pass_a"):
-        note(f"project: level A pass at {cell_a:g} m")
-        with _out(A / "run"):
-            res = api.landscape_pass(
-                dem_run, stream_threshold_km2=stream_threshold_km2,
-                segment_length_m=500.0, valley_types=True, stream_types=False,
-                geology=geology, fans=True)
-        vt = (res.get("valley_types") or {})
-        for w in res.get("warnings") or []:
-            st.warn(f"level A: {w}")
-        st.done("pass_a", run=str(A / "run"),
-                segments=(res.get("classified") or {}).get("segments"),
-                valley_types=vt.get("segments"),
-                geology=(res.get("geology") or {}).get("path"),
-                seconds=res.get("seconds"))
-    pa = st.step("pass_a")
-    reaches = gpd.read_file(pa["segments"])
-
-    # 4b. SSURGO soils over the boundary: composition, erodibility, runoff ---------
-    if soils and not st.step("soils"):
+    # 4. SSURGO soils over the boundary: composition, erodibility, runoff, and
+    # (geology="ssurgo") the material the valleys are typed by ----------------------
+    use_soils = (str(geology or "").lower() == "ssurgo")
+    if (soils or use_soils) and not st.step("soils"):
         note("project: SSURGO soils over the boundary")
         try:
             from .soils import fetch_soils
@@ -737,7 +720,37 @@ def run_project(boundary: str, where: str | None = None,
             st.warn(f"SSURGO soils could not be fetched ({type(exc).__name__}: "
                     f"{str(exc)[:200]}); run the project again to retry.")
 
-    # 5. level B, HUC12 by HUC12 --------------------------------------------------------------
+    # 5. level A pass --------------------------------------------------------------------
+    if not st.step("pass_a"):
+        geo_a = geology
+        if use_soils:
+            if st.step("soils"):
+                geo_a = st.step("soils")["path"]       # the boundary's soils
+            else:
+                geo_a = "auto"
+                st.warn("Valley materials come from USGS geology, not SSURGO "
+                        "(the soils download failed). USGS geology tends to "
+                        "call valleys bedrock; run the project again once "
+                        "SSURGO answers, after deleting pass_a from "
+                        "project.json.")
+        note(f"project: level A pass at {cell_a:g} m")
+        with _out(A / "run"):
+            res = api.landscape_pass(
+                dem_run, stream_threshold_km2=stream_threshold_km2,
+                segment_length_m=500.0, valley_types=True, stream_types=False,
+                geology=geo_a, fans=True)
+        vt = (res.get("valley_types") or {})
+        for w in res.get("warnings") or []:
+            st.warn(f"level A: {w}")
+        st.done("pass_a", run=str(A / "run"),
+                segments=(res.get("classified") or {}).get("segments"),
+                valley_types=vt.get("segments"),
+                geology=(res.get("geology") or {}).get("path"),
+                seconds=res.get("seconds"))
+    pa = st.step("pass_a")
+    reaches = gpd.read_file(pa["segments"])
+
+    # 6. level B, HUC12 by HUC12 --------------------------------------------------------------
     lon, lat = bnd_wgs.centroid.x, bnd_wgs.centroid.y
     curve, why_curve = choose_curve(lon, lat, regional_curve)
     inside = hucs[hucs["role"] == "boundary"]
@@ -754,12 +767,21 @@ def run_project(boundary: str, where: str | None = None,
             st.data["pilot"] = {"by": "unconfined"}
         else:
             note("project: choosing pilot HUC12s that represent the area")
-            order, st.data["pilot"] = _representative_pilot(
-                inside, int(pilot_count), can_run=with_lidar["huc12"],
-                valley_types=_read_or_none(pa.get("valley_types")),
-                reaches=reaches,
-                soils=_read_or_none((st.step("soils") or {}).get("path"),
-                                    columns=["hydgrpdcd", "kwfact"]))
+            try:
+                order, st.data["pilot"] = _representative_pilot(
+                    inside, int(pilot_count), can_run=with_lidar["huc12"],
+                    valley_types=_read_or_none(pa.get("valley_types")),
+                    reaches=reaches,
+                    soils=_read_or_none((st.step("soils") or {}).get("path"),
+                                        columns=["hydgrpdcd", "kwfact"]))
+            except Exception as exc:                         # noqa: BLE001
+                # The pilot's choice must never stop a night's run.
+                st.warn(f"The representative pilot could not be chosen "
+                        f"({type(exc).__name__}: {str(exc)[:200]}); the "
+                        f"pilot is the HUC12s with the most unconfined "
+                        f"valley instead.")
+                order = _pilot_order(with_lidar, reaches)
+                st.data["pilot"] = {"by": "unconfined"}
         st.save()
         done_b = [h for h, v in st.data["huc12"].items()
                   if v.get("status") == "done"]
@@ -795,7 +817,7 @@ def run_project(boundary: str, where: str | None = None,
             lidar_min_fraction, keep_lidar_tiles)
         st.save()
 
-    # 6. merged layers and the report ------------------------------------------------------------
+    # 7. merged layers and the report ------------------------------------------------------------
     merged = _merge(root, st, hucs, bnd, pa, cell_a, lidar_min_fraction)
     if st.step("soils"):
         merged["soils"] = st.step("soils")["path"]

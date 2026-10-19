@@ -1599,7 +1599,7 @@ def run_project(
     pilot_by: str = "representative",
     huc12s: str | None = None,
     stream_threshold_km2: float = 1.0,
-    geology: str | None = "auto",
+    geology: str | None = "ssurgo",
     regional_curve: str | None = "auto",
     lidar_min_fraction: float = 0.8,
     section_plots: bool = True,
@@ -1621,7 +1621,10 @@ def run_project(
     "unconfined" (stream projects: the most unconfined valley). The output
     folder gets ``merged`` layers, ``RESULTS.md`` (what ran at what
     resolution, and warnings) and ``project.json``; running the project
-    again carries on where it stopped. ``regional_curve="auto"`` picks the
+    again carries on where it stopped. ``geology="ssurgo"`` (the default)
+    types the valleys by the SSURGO soils fetched over the boundary;
+    ``"auto"`` uses USGS geology instead, which tends to call valleys
+    bedrock. ``regional_curve="auto"`` picks the
     Moody et al. (2003) province from the location, or the generic US curve
     outside the arid Southwest.
     """

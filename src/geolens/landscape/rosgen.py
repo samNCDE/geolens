@@ -760,7 +760,10 @@ def rosgen_valley_types(
             form_by_seg = {}
 
     # --- classify ------------------------------------------------------------
+    from .landscapes import FLUVIAL_LANDSCAPES, classify_landscape_type
+
     rows = []
+    lrows = []
     n_with_form = 0
     for i, (_, s) in enumerate(seg.iterrows()):
         f = form_by_seg.get(s.get(seg_key)) if form_by_seg else None
@@ -774,6 +777,10 @@ def rosgen_valley_types(
             on_fan=bool(on_fan[i]),
             form=f,
         ))
+        # Rosgen's 2022 fluvial landscape types, from the same evidence.
+        lrows.append(classify_landscape_type(
+            confinement=s.get(confinement_field), gradient=s.get(gradient_field),
+            material=materials[i], on_fan=bool(on_fan[i]), form=f))
     if form_by_seg and n_with_form < 0.5 * len(seg):
         warnings.append(
             f"valley form matched only {n_with_form} of {len(seg)} segments. "
@@ -790,6 +797,13 @@ def rosgen_valley_types(
     seg["valley_type_desc"] = [
         VALLEY_TYPES.get(r["valley_type"], "") for r in rows
     ]
+    seg["landscape_type"] = [r["landscape_type"] for r in lrows]
+    seg["landscape_name"] = [
+        FLUVIAL_LANDSCAPES[r["landscape_type"]][0] if r["landscape_type"]
+        else None for r in lrows]
+    seg["landscape_alternatives"] = ["|".join(r["alternatives"]) for r in lrows]
+    seg["landscape_confidence"] = [r["confidence"] for r in lrows]
+    seg["landscape_basis"] = [r["basis"] for r in lrows]
 
     out_dir = Path(guard.write_path(f"{out_prefix}_dir")).with_suffix("")
     out_dir.mkdir(parents=True, exist_ok=True)

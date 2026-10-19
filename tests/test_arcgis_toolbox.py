@@ -474,6 +474,9 @@ def test_project_tool_passes_the_pilot_choice(tbx, tmp_path, monkeypatch):
         ("run_project", "pilot", "representative"),
         ("run_project", "pilot", "unconfined"),
         ("run_project", "all", "representative")]
+    # Valleys are typed by SSURGO unless asked otherwise (USGS geology calls
+    # most valleys bedrock).
+    assert {kw["geology"] for _, kw in seen} == {"ssurgo"}
 
 
 def test_save_earthdata_login_tool(tbx, tmp_path, monkeypatch):

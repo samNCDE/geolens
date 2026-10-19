@@ -719,11 +719,51 @@ table was used. `association_table="builtin"` (the toolbox's *Go back to the
 built-in table*) drops the run's copy. `api.association_table(path,
 write=True)` writes the built-in table anywhere.
 
-Two things to know. The newer descriptive valley-type names Sam uses are not
-in this table yet (the crosswalk is waiting on his copy of Rosgen's list); a
-custom table can carry them as soon as the valley types use them. And with the
-v0.28 bankfull method most stream types are medium confidence at best, so read
-`check` and `unstable` as "go and look", not as a finding.
+With the v0.28 bankfull method most stream types are medium confidence at
+best, so read `check` and `unstable` as "go and look", not as a finding.
+
+### Rosgen's 2022 fluvial landscape types (v0.35)
+
+Rosgen's newer valley classification names a valley by whether it confines
+its river (`U` unconfined, `C` confined), what built it (`AL` alluvial, `BR`
+bedrock, `EO` eolian, `RE` residual, `CO` colluvial, `GL` glacial, `LA`
+lacustrine, `MA` marine, `PE` periglacial) and its landform. `U-AL-AD` is an
+unconfined alluvial valley with terraces; `C-CO-VS` a steep V-shaped
+colluvial one. Each type has a slope range, the stream types natural to it,
+and those seen under disequilibrium. Source: Rosgen (2022), Wildland
+Hydrology field card, transcribed in `geolens.landscape.landscapes`.
+
+Every valley-types layer now carries, beside the 1996 types I to XI:
+
+| Column | Meaning |
+|---|---|
+| `landscape_type` | the code, or empty when the evidence leaves more than one |
+| `landscape_name` | the card's name for it |
+| `landscape_alternatives` | the candidates still open, `U-AL-AF\|U-AL-IF` |
+| `landscape_confidence`, `landscape_basis` | how it was decided |
+
+and every stable / unstable layer carries `landscape_form` and
+`landscape_note`: the reach's stream type against the card. `stable` is one
+of the type's natural stream types, `unstable` one it lists only under
+disequilibrium, `check` one it does not list (or lists both ways, like D in
+`U-AL-AD`). The match is on the stream type with its slope class, as the card
+writes it: `Bc` is not `B`. An unresolved type is judged under each
+candidate. `form_status` (the 1996 table) stays beside it until one is
+chosen.
+
+What decides the type: confinement, the channel gradient (a stand-in for the
+valley slope the card means), the valley material, whether the reach is on
+a detected fan, and the valley's cross-section shape. What a DEM and a soils
+map cannot tell apart stays open: active from inactive fans, sand dunes from
+loess, an inner gorge from a narrow alluvial valley, and partly confined
+reaches between the U and C types. Glacial and periglacial types need a
+glacial material class; residual and colluvial valleys have no unconfined
+type on the card.
+
+The material matters more than before, since the codes are named by it. A
+project run types its valleys by the SSURGO soils it fetches over the
+boundary (`geology="ssurgo"`, the default from v0.35): the audits found USGS
+geology calls most valleys bedrock.
 
 ### Erosion features — gullies
 

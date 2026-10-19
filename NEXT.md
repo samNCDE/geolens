@@ -5,14 +5,22 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.34.1 beta. The full test suite passes on Linux with numba
+**State.** v0.35.0 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
 The release is unzipped at `S:\geolens\gl33` (the folder name stayed). The
-zip and a git bundle (`geolens_v0.34.1.bundle`, holding v0.30.0 to v0.34.1)
+zip and a git bundle (`geolens_v0.35.0.bundle`, holding v0.30.0 to v0.35.0)
 are in `S:\geolens\Claude outputs`.
 
 **Step list:** the Claude Doc "geolens step list" holds the work queue, for
 Sam to review, approve and edit. Read it before choosing what to do next.
+
+**Standing instructions (Sam, 19 Oct; until he says otherwise):**
+- Keep working immediately after every session reset, without waiting for
+  his approval. Claude schedules its own check-ins into the session.
+- After the Kingman run: review, revise, re-release, report back.
+- The end goal: one tool (geolens plus the watershed data package from his
+  no-lidar work) that anyone can copy onto a drive, point at a project
+  boundary, and leave to run on its own.
 
 **Tonight (19 Oct, 5 pm Arizona):** the first real project run, the Kingman
 BLM Field Office (`ADM_UNIT_CD='AZC01000'`), into `S:\kingman`. A
@@ -68,6 +76,28 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.35.0 (beta): Rosgen's 2022 fluvial landscape types
+
+Sam sent Rosgen's 2022 field card (confined and unconfined fluvial
+landscape types) and asked for it in the Kingman build.
+
+- `landscape/landscapes.py`: the card's 25 types (11 unconfined, 14
+  confined), each with its slope rule, natural stream types and
+  disequilibrium ones; `classify_landscape_type` from confinement, channel
+  gradient, material, fans and valley shape; `landscape_form` judges a
+  reach's stream type (with its slope class) against the card, under each
+  candidate when the type is unresolved.
+- Valley-types layers carry `landscape_type`, `landscape_name`,
+  `landscape_alternatives`, `landscape_confidence`, `landscape_basis`;
+  stable / unstable layers carry `landscape_form` and `landscape_note` beside
+  the 1996 `form_status`. Sam picks which drives the map after Kingman.
+- Projects fetch SSURGO before level A and, with `geology="ssurgo"` (now
+  the default for projects, and the toolbox's *Valley material*), type the
+  valleys by it. If SSURGO fails, USGS geology, with a warning.
+- Open: active vs inactive fans, sand vs loess, inner gorges, partly
+  confined reaches; glacial and periglacial classes. RUNNING.md, "Rosgen's
+  2022 fluvial landscape types".
 
 ## v0.34.1 (beta): lessons from the no-lidar watershed work
 

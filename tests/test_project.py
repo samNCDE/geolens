@@ -328,3 +328,58 @@ def test_a_server_that_never_answers_is_an_error(monkeypatch):
     with pytest.raises(project.GeolensError, match="down"):
         project.query_layer(URL)
     assert calls == [(500, 1), (250, 1), (125, 1), (62, 1), (50, 3)]
+
+
+def test_ssurgo_types_the_valleys(stubs, tmp_path, monkeypatch):
+    """geology="ssurgo" (the default): the boundary's soils are fetched
+    first and the level A valleys are typed by them, Rosgen's 2022 landscape
+    types included."""
+    asked = []
+
+    def fetch_soils(aoi, guard=None, max_area_km2=None, **k):
+        asked.append(aoi)
+        out = Path(guard.out_dir) / "soils_dir"
+        out.mkdir(parents=True, exist_ok=True)
+        p = out / "soils.gpkg"
+        gpd.GeoDataFrame(
+            {"mukey": [1], "material_class": ["alluvial"],
+             "pmkind": ["alluvium"], "hydgrpdcd": ["B"], "kwfact": [0.2]},
+            geometry=[box(380000, 4480000, 450000, 4540000)],
+            crs=UTM).to_file(p, driver="GPKG", layer="soils")
+        return {"soils": str(p), "polygons": 1,
+                "km2_by_material": {"alluvial": 4200.0}}
+
+    monkeypatch.setattr("geolens.soils.fetch_soils", fetch_soils)
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["ranch"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    out = tmp_path / "proj"
+    res = project.run_project(str(bnd), level_b="none", soils=False,
+                              stream_threshold_km2=3.0,
+                              section_plots=False, guard=Guard(out_dir=out))
+    status = json.loads((out / "project.json").read_text())
+    assert len(asked) == 1                          # needed for the valleys
+    assert status["steps"]["pass_a"]["geology"] == status["steps"]["soils"]["path"]
+    vt = gpd.read_file(res["valley_types"])
+    assert (vt["material_class"] == "alluvial").any()
+    assert vt["landscape_type"].str.startswith(("U-AL-", "C-AL-")).any()
+    assert {"landscape_alternatives", "landscape_basis"} <= set(vt.columns)
+
+
+def test_a_failed_pilot_choice_does_not_stop_the_run(stubs, tmp_path,
+                                                     monkeypatch):
+    def broken(*a, **k):
+        raise RuntimeError("no shapely.contains_xy here")
+
+    monkeypatch.setattr(project, "_representative_pilot", broken)
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["field office"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    res = project.run_project(str(bnd), level_b="pilot", pilot_count=1,
+                              stream_threshold_km2=3.0, geology=None,
+                              section_plots=False, soils=False,
+                              guard=Guard(out_dir=tmp_path / "p"))
+    assert res["level_b"] == {"150100000101": "done"}
+    assert any("could not be chosen" in w for w in res["warnings"])

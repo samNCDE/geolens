@@ -44,6 +44,9 @@ from .rosgen import (  # noqa: F401
     rosgen_valley_types, classify_valley_type, gradient_class,
     VALLEY_TYPES, ValleyTypeResult,
 )
+from .landscapes import (  # noqa: F401
+    classify_landscape_type, FLUVIAL_LANDSCAPES,
+)
 from .pipeline import run_landscape  # noqa: F401
 
 __all__ = [
@@ -70,5 +73,6 @@ __all__ = [
     "detect_alluvial_fans", "FanResult",
     "rosgen_valley_types", "classify_valley_type", "gradient_class",
     "VALLEY_TYPES", "ValleyTypeResult",
+    "classify_landscape_type", "FLUVIAL_LANDSCAPES",
     "run_landscape",
 ]
