@@ -1,4 +1,4 @@
-# ArcGIS Pro test checklist (v0.36 beta)
+# ArcGIS Pro test checklist (v0.37 beta)
 
 About 30 minutes, on the Eagle Creek DEM (`DEM\EagleCreekDEM.tif`: 108
 million cells at 0.61 m, 40 km²). It runs every tool once. Use a new output
@@ -11,7 +11,7 @@ all that is needed to fix it.
 
 | # | Tool | Settings | Expect |
 |---|---|---|---|
-| 1 | 0 Setup ▸ Find the geolens environment | (none) | "geolens 0.36.0 found" |
+| 1 | 0 Setup ▸ Find the geolens environment | (none) | "geolens 0.37.0 found" |
 | 2 | 0 Setup ▸ Check memory before a run | DEM = Eagle Creek | "FITS comfortably", about 10 GB |
 | 3 | 2 Steps ▸ 1. Terrain, valley bottom and confinement | DEM; output folder `v30_test` | A few minutes. *Valley bottom* and *Reaches (confinement)* added, coloured. |
 | 4 | 2 Steps ▸ 1b. Calibrate confinement breaks | Run folder `v30_test`, breaks blank | A percentile table and five candidate splits in the messages. No layers. |
@@ -27,6 +27,7 @@ all that is needed to fix it.
 | 9 | 0 Get data ▸ Fetch a DEM (USGS 3DEP) | Area: draw or pick a small polygon (1–2 km²) | `dem_tiles` and `dem_mosaic.tif`. The messages say how much is 1 m lidar. |
 | 10 | 3 More tools ▸ Clip a DEM to one watershed | DEM; pour point = a point on a channel | *Watershed boundary* and the clipped DEM |
 | 11 | 1 Whole routine ▸ Run the whole routine | Eagle Creek; new folder `v30_whole` | Every layer from steps 3–7 at once |
+| 12 | 1 Whole routine ▸ Run a project area (by HUC12) | A small boundary (one ranch, 1–3 HUC12s); new folder `v30_project`; Level B *None: valleys only*; Watershed data *All* | Needs internet, 20–40 minutes. *Valley types*, *HUC12 status*, *HUC12 summary*, *Soils (SSURGO)*, *Soils with ecological sites* and, if anything burned, *Fire perimeters* added. `RESULTS.md` has a "Watershed data by HUC12" table with every step done; `data\` holds `fire_huc12.csv` … `rap_huc12.csv`. Open *HUC12 summary*'s table: `prism_ppt_mm`, `atlas14_24h_100yr_mm`, `rap_bgr_recent` filled. |
 
 Things most likely to need a fix (they could not be tested without ArcGIS
 Pro):

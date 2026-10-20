@@ -322,6 +322,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="stop level B after this many hours")
     s.add_argument("--no-plots", action="store_true")
     s.add_argument("--no-soils", action="store_true")
+    s.add_argument("--data", default="all",
+                   help="watershed data per HUC12: all (default), none, or "
+                        "some of fire,ecosites,prism,atlas14,rap")
 
     sub.add_parser("backends", help="show which flow-routing backends are installed")
     s = sub.add_parser("history", help="what has been run in this output directory")
@@ -610,9 +613,11 @@ def main(argv: list[str] | None = None) -> int:
                 huc12s=args.huc12s, stream_threshold_km2=args.threshold_km2,
                 geology=None if args.geology == "none" else args.geology,
                 regional_curve=args.curve, section_plots=not args.no_plots,
-                level_b_hours=args.hours, soils=not args.no_soils)
+                level_b_hours=args.hours, soils=not args.no_soils,
+                data=args.data)
             _print({"project": r.get("project"),
                     "results": str(out / "RESULTS.md"),
+                    "huc12_summary": r.get("huc12_summary"),
                     "level_b": r.get("level_b"),
                     "warnings": r.get("warnings"),
                     "seconds": r.get("seconds")})

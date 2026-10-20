@@ -17,8 +17,15 @@ it covers the HUC12: the level A reaches inside it get stream types,
 section plots and the stable / unstable judgement. A HUC12 without lidar is
 reported as valleys only, with the reason.
 
+**The watershed data package** (``data``). Per HUC12 inside the boundary:
+fire history, SSURGO ecological sites, PRISM climate normals, NOAA Atlas 14
+storm depths and Rangeland Analysis Platform cover and trends
+(:mod:`geolens.wsdata`), each its own resumable step.
+
 **Merged** (``merged``). Valley types, stream types, sections, stable /
-unstable form and a HUC12 status layer, for the boundary, ready for the map.
+unstable form, a HUC12 status layer and ``huc12_summary`` (one row per
+HUC12: what it is made of and how it is behaving), for the boundary, ready
+for the map.
 
 ``project.json`` records every step. Running the same project again skips
 what is done and carries on: a long level B can be stopped and resumed, a
@@ -119,6 +126,13 @@ class _Status:
     def warn(self, text: str) -> None:
         if text not in self.data["warnings"]:
             self.data["warnings"].append(text)
+            self.save()
+
+    def unwarn(self, prefix: str) -> None:
+        """Drop the warnings a step that has now succeeded left behind."""
+        keep = [w for w in self.data["warnings"] if not w.startswith(prefix)]
+        if len(keep) != len(self.data["warnings"]):
+            self.data["warnings"] = keep
             self.save()
 
 
@@ -609,6 +623,94 @@ def _representative_pilot(hucs, k: int, can_run=None, valley_types=None,
     return pilots + rest, plan
 
 
+# -- the watershed data package -----------------------------------------------------
+
+def data_steps(data: str | list | tuple | None) -> list[str]:
+    """Which watershed data steps a project runs: "all" (the default),
+    "none", or some of ``wsdata.STEPS`` (a list, or comma-separated)."""
+    from .wsdata import STEPS
+
+    if data is None or data is False:
+        return []
+    if isinstance(data, str):
+        s = data.strip().lower()
+        if s in ("", "none", "no", "off", "false"):
+            return []
+        if s in ("all", "yes", "true"):
+            return list(STEPS)
+        items = [x.strip() for x in s.replace(";", ",").split(",") if x.strip()]
+    elif data is True:
+        return list(STEPS)
+    else:
+        items = [str(x).strip().lower() for x in data if str(x).strip()]
+    bad = [x for x in items if x not in STEPS]
+    if bad:
+        raise GeolensError(f"Unknown watershed data step(s) {', '.join(bad)}: "
+                           f"choose from {', '.join(STEPS)}, 'all' or 'none'.")
+    return [x for x in STEPS if x in items]
+
+
+def _data_step(step: str, root: Path, inside, st: "_Status",
+               timeout: int) -> dict:
+    """Run one watershed data step for the HUC12s inside the boundary; its
+    per-HUC12 table goes to ``data/<step>_huc12.csv``."""
+    from . import wsdata
+
+    ddir = root / "data"
+    ddir.mkdir(parents=True, exist_ok=True)
+    info: dict[str, Any] = {}
+    if step == "fire":
+        r = wsdata.fire_history(inside, ddir, timeout=timeout)
+        info.update(path=r["path"], perimeters=r["perimeters"])
+    elif step == "ecosites":
+        soils = (st.step("soils") or {}).get("path")
+        if not soils or not Path(soils).exists():
+            raise GeolensError("needs the SSURGO soils over the boundary, "
+                               "which did not download")
+        r = wsdata.ecological_sites(soils, ddir, inside, timeout=timeout)
+        info.update(path=r["path"], map_units=r["map_units"],
+                    with_site=r["with_site"])
+    elif step == "prism":
+        r = wsdata.prism_normals(inside, ddir / "prism")
+        info.update(source=r["source"])
+    elif step == "atlas14":
+        r = wsdata.atlas14_depths(inside, ddir / "atlas14.json")
+        info.update(failed=r["failed"])
+        if r["failed"]:
+            info["incomplete"] = True        # the rerun asks only for these
+    elif step == "rap":
+        r = wsdata.rap_cover(inside, ddir)
+        years = r["years"]
+        info.update(path=r["path"], first_year=min(years),
+                    last_year=max(years), missing_years=r["missing_years"])
+        # The latest year is often not published yet; a gap is worth a rerun.
+        if [y for y in r["missing_years"] if y < max(years)]:
+            info["incomplete"] = True
+    else:                                                    # pragma: no cover
+        raise GeolensError(f"unknown watershed data step {step!r}")
+    table = r.get("table")
+    if table is not None and len(table):
+        t = table.copy()
+        t.index = t.index.astype(str)
+        t.index.name = "huc12"
+        csv = ddir / f"{step}_huc12.csv"
+        t.to_csv(csv)
+        info["table"] = str(csv)
+        info["columns"] = list(t.columns)
+    return info
+
+
+def _slope_raster(pa: dict, A: Path) -> str | None:
+    """The level A slope raster: from the pass record, or found in its run
+    folder (a pass made before v0.37 did not record it)."""
+    p = pa.get("slope")
+    if p and Path(p).exists():
+        return str(p)
+    found = sorted((A / "run").rglob("slope.tif")) if (A / "run").exists() \
+        else []
+    return str(found[0]) if found else None
+
+
 # -- the run -----------------------------------------------------------------------
 
 def run_project(boundary: str, where: str | None = None,
@@ -622,6 +724,7 @@ def run_project(boundary: str, where: str | None = None,
                 section_plots: bool = True,
                 level_b_hours: float | None = None,
                 soils: bool = True,
+                data: str | list | None = "all",
                 keep_lidar_tiles: bool = False,
                 timeout: int = 120,
                 guard: Guard | None = None) -> dict[str, Any]:
@@ -630,7 +733,9 @@ def run_project(boundary: str, where: str | None = None,
     HUC12s with lidar, chosen by ``pilot_by``), "all", "listed"
     (``huc12s``) or "none". ``pilot_by``: "representative" (HUC12s that
     together stand for the whole area, for landscape projects) or
-    "unconfined" (the most unconfined valley, for stream projects). Resumes a
+    "unconfined" (the most unconfined valley, for stream projects).
+    ``data``: the watershed data fetched per HUC12 (``wsdata``): "all",
+    "none", or some of fire, ecosites, prism, atlas14, rap. Resumes a
     project folder that already has a ``project.json``."""
     import geopandas as gpd
 
@@ -638,6 +743,7 @@ def run_project(boundary: str, where: str | None = None,
     if pilot_by not in PILOT_BY:
         raise GeolensError(f"pilot_by must be one of {', '.join(PILOT_BY)}, "
                            f"not {pilot_by!r}.")
+    want_data = data_steps(data)                  # a typo fails before the run
     guard = guard or Guard.from_env()
     root = Path(guard.out_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -730,6 +836,7 @@ def run_project(boundary: str, where: str | None = None,
                                    max_area_km2=100_000.0)
             st.done("soils", path=sres["soils"], polygons=sres["polygons"],
                     km2_by_material=sres.get("km2_by_material"))
+            st.unwarn("SSURGO soils could not be fetched")
         except Exception as exc:                             # noqa: BLE001
             st.warn(f"SSURGO soils could not be fetched ({type(exc).__name__}: "
                     f"{str(exc)[:200]}); run the project again to retry.")
@@ -776,14 +883,32 @@ def run_project(boundary: str, where: str | None = None,
                 segments=(res.get("classified") or {}).get("segments"),
                 valley_types=vt.get("segments"),
                 geology=(res.get("geology") or {}).get("path"),
+                slope=(res.get("terrain") or {}).get("slope"),
                 seconds=res.get("seconds"))
     pa = st.step("pass_a")
     reaches = gpd.read_file(pa["segments"])
+    inside = hucs[hucs["role"] == "boundary"]
 
-    # 6. level B, HUC12 by HUC12 --------------------------------------------------------------
+    # 6. the watershed data package, per HUC12: fire, ecological sites, climate,
+    # storm depths, vegetation cover. Each is its own step: a failure is a
+    # warning, and the next run tries again ------------------------------------------
+    from .wsdata import TITLES
+
+    for step in want_data:
+        rec = st.step(f"data_{step}")
+        if rec and not rec.get("incomplete"):
+            continue
+        note(f"project: watershed data: {TITLES[step]}")
+        try:
+            st.done(f"data_{step}", **_data_step(step, root, inside, st, timeout))
+            st.unwarn(f"Watershed data, {TITLES[step]}:")
+        except Exception as exc:                             # noqa: BLE001
+            st.warn(f"Watershed data, {TITLES[step]}: {type(exc).__name__}: "
+                    f"{str(exc)[:200]}. Run the project again to retry.")
+
+    # 7. level B, HUC12 by HUC12 --------------------------------------------------------------
     lon, lat = bnd_wgs.centroid.x, bnd_wgs.centroid.y
     curve, why_curve = choose_curve(lon, lat, regional_curve)
-    inside = hucs[hucs["role"] == "boundary"]
     with_lidar = inside[inside["lidar_frac"].fillna(1.0) >= lidar_min_fraction]
     mode = (level_b or "none").lower()
     if mode == "listed":
@@ -847,11 +972,30 @@ def run_project(boundary: str, where: str | None = None,
             lidar_min_fraction, keep_lidar_tiles)
         st.save()
 
-    # 7. merged layers and the report ------------------------------------------------------------
+    # 8. merged layers, the HUC12 summary and the report ----------------------------------------
     merged = _merge(root, st, hucs, bnd, pa, cell_a, lidar_min_fraction)
     if st.step("soils"):
         merged["soils"] = st.step("soils")["path"]
-    _report(root, st, merged, cell_a, curve, why_curve)
+    for step, key in (("ecosites", "soils_ecosites"), ("fire", "fire_perimeters")):
+        p = (st.step(f"data_{step}") or {}).get("path")
+        if p and Path(p).exists():
+            merged[key] = p
+    note("project: HUC12 summary")
+    try:
+        from .wsdata import huc12_summary
+
+        s = huc12_summary(
+            root / "merged", inside, valley_types=merged.get("valley_types"),
+            soils=(st.step("soils") or {}).get("path"),
+            stability=merged.get("stability"), slope=_slope_raster(pa, A),
+            data_dir=root / "data",
+            pilot_group=(st.data.get("pilot") or {}).get("group_of"))
+        merged["huc12_summary"] = s["path"]
+        st.unwarn("The HUC12 summary could not be built")
+    except Exception as exc:                                 # noqa: BLE001
+        st.warn(f"The HUC12 summary could not be built ({type(exc).__name__}: "
+                f"{str(exc)[:200]}).")
+    _report(root, st, merged, cell_a, curve, why_curve, want_data)
     return {"project": str(root), "status": str(st.path), **merged,
             "level_b": {h: v.get("status") for h, v in st.data["huc12"].items()},
             "warnings": st.data["warnings"],
@@ -995,8 +1139,42 @@ def _merge(root: Path, st: _Status, hucs, bnd, pa: dict, cell_a: float,
     return out
 
 
+def _data_lines(st: _Status, want: list[str]) -> list[str]:
+    """RESULTS.md: the watershed data steps, what each fetched, and what it
+    is for."""
+    from .wsdata import SOURCES, TITLES
+
+    if not want:
+        return []
+    out = ["## Watershed data by HUC12", "",
+           "Fetched for the HUC12s inside the boundary; each is a column set "
+           "in `huc12_summary` and a CSV in `data/`.", "",
+           "| Data | Source | Status |", "|---|---|---|"]
+    for step in want:
+        rec = st.step(f"data_{step}")
+        if not rec:
+            status = "not fetched (see warnings)"
+        elif step == "fire":
+            status = f"{rec.get('perimeters', 0):,} fire perimeters"
+        elif step == "ecosites":
+            status = (f"{rec.get('with_site', 0):,} of {rec.get('map_units', 0):,} "
+                      f"map units have an ecological site")
+        elif step == "rap":
+            status = f"{rec.get('first_year')} to {rec.get('last_year')}"
+            if rec.get("missing_years"):
+                status += (", missing " +
+                           ", ".join(str(y) for y in rec["missing_years"]))
+        elif step == "atlas14":
+            status = "done" if not rec.get("failed") else \
+                f"{rec['failed']} HUC12s unanswered (rerun to retry)"
+        else:
+            status = "done"
+        out.append(f"| {TITLES[step]} | {SOURCES[step]} | {status} |")
+    return out + [""]
+
+
 def _report(root: Path, st: _Status, merged: dict, cell_a: float,
-            curve, why_curve: str) -> None:
+            curve, why_curve: str, want_data: list[str] | None = None) -> None:
     b = st.data["huc12"]
     counts: dict[str, int] = {}
     for v in b.values():
@@ -1031,6 +1209,16 @@ def _report(root: Path, st: _Status, merged: dict, cell_a: float,
         ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())) or "none run",
         ""]
     lines += _pilot_lines(st.data.get("pilot") or {})
+    lines += _data_lines(st, want_data or [])
+    if merged.get("huc12_summary"):
+        lines += ["## The HUC12 summary", "",
+                  "`huc12_summary` (and `merged/huc12_summary.csv`) has one "
+                  "row per HUC12 inside the boundary: stream km and the main "
+                  "valley and fluvial landscape types, soil material, "
+                  "hydrologic group and erodibility, slope, stream form where "
+                  "level B ran, and the watershed data above. It is the "
+                  "subwatershed table a plan's hydrologic section is written "
+                  "from; nothing in it is weighted into a score.", ""]
     lines += ["## Layers", ""]
     lines += [f"- `{k}`: {v}" for k, v in merged.items()]
     if st.data["warnings"]:

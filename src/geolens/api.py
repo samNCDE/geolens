@@ -1605,6 +1605,7 @@ def run_project(
     section_plots: bool = True,
     level_b_hours: float | None = None,
     soils: bool = True,
+    data: str | list | None = "all",
 ) -> dict[str, Any]:
     """A whole project area, any size: valleys everywhere, channels on lidar.
 
@@ -1626,7 +1627,14 @@ def run_project(
     ``"auto"`` uses USGS geology instead, which tends to call valleys
     bedrock. ``regional_curve="auto"`` picks the
     Moody et al. (2003) province from the location, or the generic US curve
-    outside the arid Southwest.
+    outside the arid Southwest. ``data`` is the watershed data fetched per
+    HUC12 inside the boundary, each its own resumable step: "all" (the
+    default), "none", or some of ``fire`` (NIFC perimeters: share burned,
+    last fire), ``ecosites`` (SSURGO ecological sites), ``prism`` (1991-2020
+    precipitation, monsoon share, temperature), ``atlas14`` (NOAA storm
+    depths) and ``rap`` (Rangeland Analysis Platform cover, 1986 on, with
+    trends). They and the project's own results meet in ``huc12_summary``,
+    one row per HUC12.
     """
     from .project import run_project as _rp
 
@@ -1636,7 +1644,7 @@ def run_project(
                regional_curve=regional_curve,
                lidar_min_fraction=lidar_min_fraction,
                section_plots=section_plots, level_b_hours=level_b_hours,
-               soils=soils)
+               soils=soils, data=data)
 
 
 def check_services(timeout: int = 20) -> dict[str, Any]:

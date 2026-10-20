@@ -1076,8 +1076,9 @@ geolens project https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Na
 
 Options: `--level-b`, `--pilots`, `--pilot-by`, `--huc12s`, `--geology`
 (`ssurgo`, `auto`, `none`), `--curve`, `--threshold-km2`, `--hours`,
-`--no-plots`, `--no-soils`. A line or point boundary is buffered by 250 m.
-In Python:
+`--no-plots`, `--no-soils`, `--data` (v0.37: `all`, `none`, or some of
+`fire,ecosites,prism,atlas14,rap`). A line or point boundary is buffered by
+250 m. In Python:
 
 ```python
 r = api.run_project(
@@ -1118,8 +1119,9 @@ The project folder holds:
   carries on where it stopped;
 - `huc12.gpkg`: each HUC12's role and lidar coverage;
 - `A_landscape/` and `B_huc12/<code>/`: the runs;
-- `merged/`: valley types, stream types, sections, stability and
-  `huc12_status`, for the boundary;
+- `data/`: the watershed data package (v0.37, below);
+- `merged/`: valley types, stream types, sections, stability,
+  `huc12_status` and `huc12_summary`, for the boundary;
 - `RESULTS.md`: what ran at what resolution, and every warning.
 
 **Resolution travels with the results.** Merged valley types carry
@@ -1150,6 +1152,53 @@ lidar (`no lidar`: valleys only), and which are still `queued`.
 Drainage areas on rivers entering from outside the HUC8s the project
 touches (the Colorado) are local only, and `RESULTS.md` says so.
 
+### The watershed data package, and the HUC12 summary (v0.37)
+
+A vegetation management plan's hydrologic section is written from what the
+subwatersheds are made of and how they have been behaving, not from valley
+types alone. So a project also fetches, per HUC12 inside the boundary, the
+data package from the no-lidar watershed work (`geolens.wsdata`), each
+source its own step: fetched once, kept in `data/`, resumed by
+`project.json`, and a failure is a warning that the next run retries, not
+the end of the night.
+
+| `data` step | Source | Per HUC12 |
+|---|---|---|
+| `fire` | NIFC InterAgency Fire Perimeter History (`data/fire_perimeters.gpkg`) | share burned (all years, since 2000, last 10 years), number of fires, last fire year |
+| `ecosites` | SSURGO components' ecological sites (`coecoclass`), on the project's soils (`data/soils_ecosites.gpkg`: each map unit's largest major component with a site, NRCS sites preferred) | dominant ecological site and its share, number of sites |
+| `prism` | PRISM 1991-2020 normals, 800 m (zips kept in `data/prism`; the PRISM web service does not serve normals) | annual precipitation (mm), the share falling July-September (the monsoon), mean temperature |
+| `atlas14` | NOAA Atlas 14 (PFDS), at each HUC12's centre, answers kept in `data/atlas14.json` | 1-hour and 24-hour depths at 2, 10, 25 and 100 years, mm |
+| `rap` | Rangeland Analysis Platform cover v3, 30 m, 1986 on, read a window at a time from the remote rasters (`data/rap_cover_huc12.csv`, a year at a time, resumable) | annual and perennial forb and grass, shrub, tree, litter and bare ground: the last five years' mean, and the trend per decade |
+
+`data="all"` is the default (toolbox: *Watershed data per HUC12*; shell:
+`--data`); `"none"` skips them, or name some: `data="fire,rap"`. SSURGO
+over the boundary must have downloaded for `ecosites`. They are CONUS
+sources, like 3DEP and SSURGO.
+
+Then `merged/huc12_summary.gpkg` (and `.csv`), one row per HUC12 inside
+the boundary, puts them beside what the project measured:
+
+- the HUC12: name, km², share inside the boundary, lidar share, and
+  `pilot_group`, the pilot HUC12 whose level B results stand for it;
+- streams (level A): km, shares by confinement, the main 1996 valley
+  types and 2022 fluvial landscape types (`"VIII 67%, II 33%"`), and the
+  share of stream length in alluvial landscape types (`*-AL-*`);
+- soils (SSURGO): shares by material (`soil_alluvial_share`,
+  `soil_colluvial_share`, ...) and hydrologic group (`hsg_A_share` to
+  `hsg_D_share`; a dual group counts as D), area-weighted surface
+  erodibility `soil_k_mean`;
+- slope (the level A DEM): `slope_mean_pct` and `slope_over_20pct_share`;
+- stream form (level B, where it ran): km stable, unstable and check by
+  the 1996 table (`form1996_*_km`) and by the 2022 card (`form2022_*_km`);
+- the data steps' columns (`fire_*`, `ecosite_*`, `prism_*`, `atlas14_*`,
+  `rap_*_recent`, `rap_*_per_decade`).
+
+Nothing is weighted into a score. Which of these make a HUC12 sensitive
+(bare ground rising on erodible D soils below a burn, say) is the
+analyst's call, and the table is built to make it: sort it, map it from
+the geopackage, or join it to treatment areas. `RESULTS.md` lists what
+each step fetched.
+
 ### Portable: everything on one drive (v0.33)
 
 `setup_portable.bat` builds `env` (Python and every library) inside the
@@ -1172,8 +1221,9 @@ on the computer. When `env` exists:
 
 `api.check_services()` (toolbox: *0 Setup ▸ Check internet services*) makes
 one small request to each service geolens downloads from: 3DEP, the WBD,
-the national geologic map, SSURGO, NAIP, NASA CMR. It also says whether an
-Earthdata login is saved. Run it before a long project.
+the national geologic map, SSURGO, NAIP, NASA CMR, and (v0.37) NIFC fire
+perimeters, PRISM, NOAA Atlas 14 and the RAP cover rasters. It also says
+whether an Earthdata login is saved. Run it before a long project.
 
 ---
 

@@ -129,7 +129,7 @@ ArcGIS.
    Add Toolbox* and choose `arcgis_toolbox\geolens.pyt` in the geolens
    folder.
 2. **Check it:** run *0 Setup ▸ Find the geolens environment*. It should
-   report "geolens 0.36.0 found". If it can't find the environment, give it
+   report "geolens 0.37.0 found". If it can't find the environment, give it
    the environment's `python.exe`, which the installer prints. The tool
    remembers it.
    *0 Setup ▸ Check internet services* says which download services this
@@ -141,7 +141,9 @@ ArcGIS.
    stable/unstable form one HUC12 at a time where there is 1 m lidar,
    starting with a pilot: a few HUC12s that together represent the area
    (by valley types and soils), or, for stream projects, the HUC12s with the
-   most unconfined valley.
+   most unconfined valley. It also fetches, per HUC12, fire history,
+   ecological sites, PRISM climate, Atlas 14 storm depths and RAP
+   vegetation cover, and writes one summary row per HUC12 (`huc12_summary`).
    `RESULTS.md` in the folder says what ran at what resolution. Run it again
    to carry on.
 

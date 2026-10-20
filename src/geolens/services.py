@@ -97,6 +97,50 @@ def _login(timeout):
     return f"saved for {s['username']}"
 
 
+def _fire(timeout):
+    from .wsdata import FIRE_URLS
+
+    d = _json(FIRE_URLS[0], {"f": "json"}, timeout)
+    if d.get("error"):
+        raise RuntimeError(str(d["error"])[:200])
+    return d.get("name") or "fire perimeter history reachable"
+
+
+def _prism(timeout):
+    from .wsdata import _prism_urls
+
+    for url in _prism_urls("ppt", None):
+        try:
+            _http(url, timeout, method="HEAD")
+            return "1991-2020 normals reachable"
+        except Exception as e:                               # noqa: BLE001
+            last = e
+    raise RuntimeError(f"{type(last).__name__}: {last}")
+
+
+def _atlas14(timeout):
+    from .wsdata import ATLAS14_URL, parse_pfds
+
+    q = parse_pfds(_http(ATLAS14_URL + "?" + urllib.parse.urlencode(
+        {"lat": "35.19", "lon": "-114.05", "type": "pf", "data": "depth",
+         "units": "english", "series": "pds"}), timeout).decode("utf-8",
+                                                               "replace"))
+    return f"24-hr 100-yr at Kingman: {q['24-hr'][100]:.2f} in"
+
+
+def _rap(timeout):
+    from .wsdata import RAP_URLS
+
+    last = None
+    for tmpl in RAP_URLS:
+        try:
+            _http(tmpl.format(year=2020), timeout, method="HEAD")
+            return "cover rasters reachable"
+        except Exception as e:                               # noqa: BLE001
+            last = e
+    raise RuntimeError(f"{type(last).__name__}: {last}")
+
+
 CHECKS: list[tuple[str, str, Callable[[int], str]]] = [
     ("USGS 3DEP lidar search (The National Map)", "DEM fetch", _tnm),
     ("USGS 3DEP 1/3 arc-second tiles", "DEM fetch, projects", _ned),
@@ -106,6 +150,10 @@ CHECKS: list[tuple[str, str, Callable[[int], str]]] = [
     ("Microsoft Planetary Computer (NAIP)", "NAIP, riparian band", _naip),
     ("NASA CMR (Sentinel-1 search)", "radar", _cmr),
     ("NASA Earthdata login on this computer", "radar", _login),
+    ("NIFC fire perimeter history", "project data: fire", _fire),
+    ("PRISM 1991-2020 normals", "project data: climate", _prism),
+    ("NOAA Atlas 14 (PFDS)", "project data: storm depths", _atlas14),
+    ("Rangeland Analysis Platform cover", "project data: vegetation", _rap),
 ]
 
 

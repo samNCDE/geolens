@@ -930,7 +930,11 @@ class RunProject(_Tool):
         "unstable form. A pilot either represents the whole area (HUC12s "
         "grouped by valley types and soils; each group's most typical one "
         "runs) or goes where the valleys are most unconfined. A HUC12 "
-        "without lidar is reported as valleys only. "
+        "without lidar is reported as valleys only. The watershed data "
+        "package (fire history, SSURGO ecological sites, PRISM climate, "
+        "NOAA Atlas 14 storm depths, RAP vegetation cover and trends) is "
+        "fetched per HUC12, and meets the valley types, soils, slope and "
+        "stream form in one HUC12 summary table. "
         "Merged layers, a HUC12 status layer and RESULTS.md (what ran at "
         "what resolution, and every warning) go in the project folder. "
         "Run it again on the same folder to carry on where it stopped.")
@@ -942,6 +946,14 @@ class RunProject(_Tool):
                ("Every HUC12 with lidar", "all"),
                ("Only the HUC12s listed below", "listed"),
                ("None: valleys only", "none")]
+    DATA = [("All: fire, ecological sites, climate, storm depths, "
+             "vegetation cover", "all"),
+            ("Fire history (NIFC perimeters)", "fire"),
+            ("Ecological sites (SSURGO)", "ecosites"),
+            ("Climate normals (PRISM 1991-2020)", "prism"),
+            ("Design storm depths (NOAA Atlas 14)", "atlas14"),
+            ("Vegetation cover and trends (RAP, 1986 on)", "rap"),
+            ("None", "none")]
     CURVES = ga.CURVES
 
     def parameters(self):
@@ -962,6 +974,8 @@ class RunProject(_Tool):
               choices=[ga.GEOLOGY[3], ga.GEOLOGY[0], ga.GEOLOGY[1]]),
             P("Regional bankfull curve", "curve", "GPString",
               default=self.CURVES[0][0], choices=[c[0] for c in self.CURVES]),
+            P("Watershed data per HUC12", "data", "GPString",
+              default=self.DATA[0][0], choices=[c[0] for c in self.DATA]),
             P("Stream threshold, km2", "threshold", "GPDouble", default=1.0,
               category=OPT),
             P("Stop level B after this many hours (0 = no limit)", "hours",
@@ -975,7 +989,10 @@ class RunProject(_Tool):
             D("Stream-type sections", "out_sections"),
             D("Stable / unstable form", "out_stability"),
             D("HUC12 status", "out_huc12"),
+            D("HUC12 summary", "out_summary"),
             D("Soils (SSURGO)", "out_soils"),
+            D("Soils with ecological sites", "out_ecosites"),
+            D("Fire perimeters", "out_fire"),
         ]
 
     def updateMessages(self, parameters):
@@ -1009,6 +1026,7 @@ class RunProject(_Tool):
             "section_plots": bool(v["plots"].value),
             "level_b_hours": v["hours"].value or None,
             "soils": bool(v["soils"].value),
+            "data": ga.choice(v["data"], self.DATA),
         }, out, "project")
         arcpy.AddMessage("level B: %s" % res.get("level_b"))
         arcpy.AddMessage("results: %s" % os.path.join(out, "RESULTS.md"))
@@ -1017,7 +1035,10 @@ class RunProject(_Tool):
                           ("out_sections", "sections"),
                           ("out_stability", "stability"),
                           ("out_huc12", "huc12_status"),
-                          ("out_soils", "soils")):
+                          ("out_summary", "huc12_summary"),
+                          ("out_soils", "soils"),
+                          ("out_ecosites", "soils_ecosites"),
+                          ("out_fire", "fire_perimeters")):
             ga.set_output(v, name, res.get(key))
 
 

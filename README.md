@@ -6,7 +6,7 @@ types, and judges whether each reach's stream type is a **stable or unstable
 form for its valley**. Every channel section it measures comes with a plot you
 can click on the map.
 
-*Beta (v0.36). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
+*Beta (v0.37). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
 or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 
 ---
@@ -68,9 +68,13 @@ else. Their computer needs only ArcGIS Pro.
 **A whole project, no ArcGIS needed.** Drag a project boundary (shapefile,
 GeoPackage, GeoJSON or KML; a stream line or points are buffered) onto
 **`run_project.bat`** and leave it. It runs everything below for the
-boundary on its own and writes it to `<boundary name>_geolens` beside the
-boundary, with `RESULTS.md` saying what ran and how far to trust it. Run it
-again to carry on where it stopped. The same from a shell:
+boundary on its own, fetches the watershed data a plan needs per HUC12
+(fire history, SSURGO ecological sites, PRISM climate, NOAA Atlas 14 storm
+depths, Rangeland Analysis Platform cover and its trends since 1986), and
+writes it all to `<boundary name>_geolens` beside the boundary: the layers,
+one summary table per HUC12 of what it is made of and how it is behaving,
+and `RESULTS.md` saying what ran and how far to trust it. Run it again to
+carry on where it stopped. The same from a shell:
 
 ```
 geolens project boundary.gpkg

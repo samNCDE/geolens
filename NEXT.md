@@ -5,14 +5,15 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.36.0 beta. The full test suite passes on Linux with numba
+**State.** v0.37.0 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
-The release is unzipped at `S:\geolens\gl33` (the folder name stayed). The
-zip and a git bundle (`geolens_v0.36.0.bundle`, holding v0.30.0 to v0.36.0)
-are in `S:\geolens\Claude outputs`. **While the Kingman run uses gl33, its
-code is not touched:** a release made during the run goes to Claude outputs
-only, and into gl33 once the run has stopped (a module swapped mid-run could
-mix versions in one process).
+v0.35.0 is unzipped at `S:\geolens\gl33` (the folder name stayed) and is
+what the Kingman run uses. The v0.36 and v0.37 zips and git bundles
+(`geolens_v0.37.0.bundle`, holding v0.30.0 to v0.37.0) are in
+`S:\geolens\Claude outputs`. **While the Kingman run uses gl33, its code is
+not touched:** a release made during the run goes to Claude outputs only,
+and into gl33 once the run has stopped (a module swapped mid-run could mix
+versions in one process).
 
 **Step list:** the Claude Doc "geolens step list" holds the work queue, for
 Sam to review, approve and edit. Read it before choosing what to do next.
@@ -29,6 +30,15 @@ Sam to review, approve and edit. Read it before choosing what to do next.
 BLM Field Office (`ADM_UNIT_CD='AZC01000'`), into `S:\kingman`. A
 scheduled task starts it in this session. It runs on the existing
 environment unless `setup_portable.bat` succeeds first; nothing goes on C:.
+**Started at 3:57 pm on 19 Oct** (Sam said to go when ready), in a second
+ArcGIS Pro window so his open Ruidoso project was not touched: project
+`S:\kingman\kingman.aprx`, results `S:\kingman\geolens`, v0.35.0 from
+`S:\geolens\gl33`. Watch `project.json` there; **never start a second run
+on that folder while one is going** (re-running the tool after it stops
+carries on from `project.json`). By 4:25 pm: boundary, 446 HUC12s (309 in
+the field office, 41,053 km²), the 10 m DEM (plan: 70 GB peak, tight) and
+SSURGO (7,380 polygons; 15,617 km² alluvial, 5,035 colluvial) were done; the
+10 m level A pass was running.
 **Scope (Sam, 19 Oct):** a landscape-scale vegetation management project
 looking at geomorphology, not stream restoration. So the core product is
 level A and soils over the whole field office, summarized by subwatershed,
@@ -79,6 +89,47 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.37.0 (beta): the watershed data package inside the project run
+
+Sam: "integrate what we've learned and built in that chat into geolens, I
+think the two together will be what I'm looking for" — one tool. The data
+sources from his no-lidar watershed package (`data_prep.py`, Black Mesa
+Unit 407) that a vegetation management plan's hydrologic section needs are
+now steps of a project run, in `src/geolens/wsdata.py`:
+
+- `fire` (NIFC perimeter history, through the patient `query_layer`),
+  `ecosites` (SSURGO `coecoclass` on the project's soils), `prism`
+  (1991-2020 normals, direct zips: the web service has no normals),
+  `atlas14` (PFDS at each HUC12's centre, the `cgi_readH5.py` URL from
+  NOAA's FAQ, answers cached in `data/atlas14.json`) and `rap` (cover v3
+  1986 on, windows from the remote rasters at the coarsest resolution a
+  HUC12 mean needs, GDAL's cache capped at 512 MB: the 100 GB lesson).
+- Each is its own resumable step (`data_<step>` in `project.json`); a
+  failure is a warning the next run retries. `data="all"` is the default;
+  toolbox *Watershed data per HUC12*; CLI `--data`.
+- `merged/huc12_summary.gpkg` + `.csv`: one row per HUC12 inside the
+  boundary — streams by confinement, valley and landscape types, soils by
+  material and hydrologic group, K, slope, stream form km (1996 and 2022),
+  and every data step's columns. No score: the analyst's table.
+- `RESULTS.md` gets a "Watershed data by HUC12" table.
+- `check_services` tries NIFC, PRISM, Atlas 14 and RAP too.
+- The toolbox adds derived outputs *HUC12 summary*, *Soils with ecological
+  sites* and *Fire perimeters*.
+
+Tested offline with stand-ins for every service (`tests/test_wsdata.py`,
+14 tests) and inside the project run (stubbed data steps; a failed step
+is a warning and is retried). Live: RAP read from Claude's sandbox at
+13 s a year over a Kingman-sized window; NIFC, PRISM and Atlas 14 are
+blocked from the sandbox (proxy 403), so their first live contact is
+Sam's machine. The `services` check will say.
+
+**Kingman:** this release was built while the v0.35 run was going, so it
+went to `Claude outputs` only. Once the run has stopped, put v0.37 in
+gl33 and run the project tool again on `S:\kingman\geolens`: it resumes
+from `project.json` (boundary, HUC12s, DEM, soils and level A are kept),
+runs the five data steps, and writes the summary. A v0.35 `pass_a` record
+has no `slope` entry; the summary finds `A_landscape/run/**/slope.tif`.
 
 ## v0.36.0 (beta): pick a boundary, let it run
 

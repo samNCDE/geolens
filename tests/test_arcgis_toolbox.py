@@ -475,8 +475,17 @@ def test_project_tool_passes_the_pilot_choice(tbx, tmp_path, monkeypatch):
         ("run_project", "pilot", "unconfined"),
         ("run_project", "all", "representative")]
     # Valleys are typed by SSURGO unless asked otherwise (USGS geology calls
-    # most valleys bedrock).
+    # most valleys bedrock), and the whole watershed data package is fetched.
     assert {kw["geology"] for _, kw in seen} == {"ssurgo"}
+    assert {kw["data"] for _, kw in seen} == {"all"}
+    tool, params, v = _tool(
+        tbx, "RunProject", out_folder=str(tmp_path),
+        data=mod.RunProject.DATA[4][0],
+        url="https://example.org/arcgis/rest/services/x/MapServer/3")
+    tool.execute(params, None)
+    assert seen[-1][1]["data"] == "atlas14"
+    names = [p.name for p in tool.getParameterInfo()]
+    assert {"out_summary", "out_ecosites", "out_fire"} <= set(names)
 
 
 def test_save_earthdata_login_tool(tbx, tmp_path, monkeypatch):

@@ -76,9 +76,25 @@ def stubs(monkeypatch, tmp_path):
         return {"dem": str(dst), "coverage": 1.0, "lidar_fraction": 1.0,
                 "cell_size_m": 30.0, "crs": UTM, "warnings": []}
 
+    def data_step(step, root, inside, st, timeout):
+        # The watershed data package, without the internet: one column each.
+        import pandas as pd
+
+        calls.setdefault("data", []).append(step)
+        ddir = root / "data"
+        ddir.mkdir(exist_ok=True)
+        csv = ddir / f"{step}_huc12.csv"
+        pd.DataFrame({"huc12": list(inside["huc12"]),
+                      f"{step}_value": [1.0] * len(inside)}).to_csv(csv, index=False)
+        return {"table": str(csv), "columns": [f"{step}_value"],
+                "perimeters": 2, "map_units": 3, "with_site": 2,
+                "first_year": 1986, "last_year": 2025, "missing_years": [],
+                "failed": 0}
+
     monkeypatch.setattr(project, "query_layer", query_layer)
     monkeypatch.setattr("geolens.dem_fetch.search_1m", search_1m)
     monkeypatch.setattr(api, "fetch_dem", fetch_dem)
+    monkeypatch.setattr(project, "_data_step", data_step)
     monkeypatch.setenv("GEOLENS_PERSIST", "0")
     return calls
 
@@ -125,13 +141,82 @@ def test_a_project_runs_in_two_levels_and_resumes(stubs, tmp_path):
     assert group["150100000101"] == group["150100000102"] == "150100000101"
     assert group.isna()["150100000103"]                        # upstream only
 
+    # The watershed data package ran once per step, for the HUC12s inside
+    # the boundary, and everything met in the HUC12 summary.
+    assert stubs["data"] == ["fire", "ecosites", "prism", "atlas14", "rap"]
+    assert {"data_fire", "data_rap"} <= set(status["steps"])
+    summary = gpd.read_file(res["huc12_summary"]).set_index("huc12")
+    assert set(summary.index) == {"150100000101", "150100000102"}
+    assert summary.loc["150100000101", "pilot_group"] == "150100000101"
+    assert summary["stream_km"].gt(0).all()
+    assert {"fire_value", "rap_value", "prism_value", "slope_mean_pct",
+            "landscape_types_2022", "valley_types_1996"} <= set(summary.columns)
+    assert summary.loc["150100000101", "form1996_stable_km"] > 0 or \
+        summary.loc["150100000101", "form1996_unstable_km"] > 0
+    assert (out / "merged" / "huc12_summary.csv").exists()
+    assert "## Watershed data by HUC12" in report
+    assert "| fire history | NIFC InterAgency Fire Perimeter History | 2 fire perimeters |" in report
+    assert "| vegetation cover | Rangeland Analysis Platform cover v3, 30 m | 1986 to 2025 |" in report
+
     # Again: nothing is fetched or recomputed; the merged layers are rebuilt.
     again = project.run_project(str(bnd), level_b="pilot", pilot_count=1,
                                 stream_threshold_km2=3.0, geology=None,
                                 section_plots=False, soils=False,
                               guard=Guard(out_dir=out))
     assert stubs["fetch"] == ["1/3", "1m"]
+    assert len(stubs["data"]) == 5                             # not again
     assert again["level_b"] == {"150100000101": "done"}
+    assert again["huc12_summary"] == res["huc12_summary"]
+
+
+def test_a_failed_data_step_is_a_warning_and_is_retried(stubs, tmp_path,
+                                                         monkeypatch):
+    """A watershed data source that does not answer is a warning, not the
+    end of the run; the next run tries it again, and the warning goes once
+    it works. "data" picks the steps, and a typo fails before any work."""
+    real = project._data_step
+    broken = {"prism"}
+
+    def data_step(step, *a, **k):
+        if step in broken:
+            raise RuntimeError("PRISM did not answer")
+        return real(step, *a, **k)
+
+    monkeypatch.setattr(project, "_data_step", data_step)
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["ranch"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    out = tmp_path / "proj"
+    with pytest.raises(Exception, match="Unknown watershed data"):
+        project.run_project(str(bnd), level_b="none", geology=None,
+                            soils=False, data="fire,prsm",
+                            guard=Guard(out_dir=out))
+    assert not (out / "project.json").exists()
+    res = project.run_project(str(bnd), level_b="none", geology=None,
+                              stream_threshold_km2=3.0, soils=False,
+                              section_plots=False, data="fire, prism",
+                              guard=Guard(out_dir=out))
+    assert stubs["data"] == ["fire"]
+    assert any("climate normals: RuntimeError: PRISM" in w for w in res["warnings"])
+    summary = gpd.read_file(res["huc12_summary"])
+    assert "fire_value" in summary.columns and "prism_value" not in summary.columns
+    report = (out / "RESULTS.md").read_text()
+    assert "| climate normals | PRISM 1991-2020 normals, 800 m | not fetched" in report
+    assert "| fire history |" in report and "| vegetation cover |" not in report
+
+    broken.clear()
+    res = project.run_project(str(bnd), level_b="none", geology=None,
+                              stream_threshold_km2=3.0, soils=False,
+                              section_plots=False, data=["prism", "fire"],
+                              guard=Guard(out_dir=out))
+    assert stubs["data"] == ["fire", "prism"]                  # fire kept
+    assert not any("PRISM" in w for w in res["warnings"])
+    assert "prism_value" in gpd.read_file(res["huc12_summary"]).columns
+
+    assert project.data_steps("none") == [] and project.data_steps(None) == []
+    assert project.data_steps("all") == list(project.data_steps(True))
+    assert project.data_steps("rap, fire") == ["fire", "rap"]
 
 
 def test_regional_curve_by_location():
