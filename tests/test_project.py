@@ -169,6 +169,56 @@ def test_a_project_runs_in_two_levels_and_resumes(stubs, tmp_path):
     assert again["huc12_summary"] == res["huc12_summary"]
 
 
+def test_a_project_typed_under_an_older_revision_is_retyped(stubs, tmp_path,
+                                                             monkeypatch):
+    """Kingman was typed under revision 1 (1,500 km of glacial trough on
+    alluvium). Running the project again under a newer TYPING redoes the
+    valley types from the saved valley form and fans, nothing is routed
+    again, and the level B form of the HUC12s already done is judged again
+    against the new types."""
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["field office"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    out = tmp_path / "proj"
+    kw = dict(level_b="pilot", pilot_count=1, stream_threshold_km2=3.0,
+              geology=None, section_plots=False, soils=False, data="none")
+    res = project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    status = json.loads((out / "project.json").read_text())
+    assert status["steps"]["pass_a"]["typing"] == project.TYPING
+    first_stab = gpd.read_file(res["stability"])
+    first_vt = Path(status["steps"]["pass_a"]["valley_types"])
+    stamp = first_vt.stat().st_mtime_ns
+
+    # As if typed by an older release.
+    status["steps"]["pass_a"]["typing"] = 1
+    (out / "project.json").write_text(json.dumps(status))
+    calls = []
+    real_pass = api.landscape_pass
+    monkeypatch.setattr(api, "landscape_pass",
+                        lambda *a, **k: calls.append("pass") or real_pass(*a, **k))
+    judged = []
+    from geolens.landscape import stability as stab_mod
+    real_judge = stab_mod.stream_stability
+
+    def judge(*a, **k):
+        judged.append(a[1])
+        return real_judge(*a, **k)
+
+    monkeypatch.setattr(stab_mod, "stream_stability", judge)
+    res2 = project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    status = json.loads((out / "project.json").read_text())
+    assert calls == [] and stubs["fetch"] == ["1/3", "1m"]       # no rerun
+    assert status["steps"]["pass_a"]["typing"] == project.TYPING
+    assert Path(status["steps"]["pass_a"]["valley_types"]).stat().st_mtime_ns > stamp
+    assert judged == [status["huc12"]["150100000101"]["stream_types"]]
+    assert res2["level_b"] == {"150100000101": "done"}
+    again = gpd.read_file(res2["stability"])
+    assert len(again) == len(first_stab)
+    assert set(again["form_status"]) <= {"stable", "unstable", "check", "unknown"}
+    assert not any("could not be redone" in w for w in res2["warnings"])
+
+
 def test_a_failed_data_step_is_a_warning_and_is_retried(stubs, tmp_path,
                                                          monkeypatch):
     """A watershed data source that does not answer is a warning, not the

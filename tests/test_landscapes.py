@@ -69,15 +69,51 @@ def test_what_the_evidence_cannot_say():
                                      )["landscape_type"] is None
     r = L.classify_landscape_type("confined", 0.01, None)
     assert r["landscape_type"] is None and "material" in r["basis"]
-    r = L.classify_landscape_type("unconfined", 0.01, "residual")
-    assert r["landscape_type"] is None and "no unconfined type" in r["basis"]
-    r = L.classify_landscape_type("partly confined", 0.01, "alluvial")
-    assert r["landscape_type"] is None
-    assert r["alternatives"] == ["U-AL-AD", "C-AL-AD"]
+    r = L.classify_landscape_type("confined", 0.01, "mass_movement",
+                                  form={"shape_n": 2.0})
+    assert r["landscape_type"] == "C-CO-US"           # the walls' material
     r = L.classify_landscape_type("partly confined", 0.04, "alluvial")
     assert r["landscape_type"] == "C-AL-AD"          # U-AL-AD wants < 3%
     r = L.classify_landscape_type("unconfined", 0.05, "alluvial")
     assert r["landscape_type"] == "U-AL-IF" and r["confidence"] == "medium"
+
+
+def test_an_unconfined_floor_is_stream_built():
+    """Kingman: 22% of stream length had no landscape type because the soils
+    map said colluvium or residuum, or nothing, over an unconfined floor.
+    That is the hillslope's unit; the floor is alluvial, at low confidence."""
+    r = L.classify_landscape_type("unconfined", 0.01, "residual")
+    assert r["landscape_type"] == "U-AL-AD" and r["confidence"] == "low"
+    assert "hillslope" in r["basis"] and "residual" in r["basis"]
+    r = L.classify_landscape_type("unconfined", 0.04, "mass_movement")
+    assert r["landscape_type"] == "U-AL-IF" and r["alternatives"] == ["U-AL-AD"]
+    r = L.classify_landscape_type("unconfined", 0.01, None)
+    assert r["landscape_type"] == "U-AL-AD" and "no material mapped" in r["basis"]
+    # Confined valleys keep the map's material: there it names the walls.
+    r = L.classify_landscape_type("confined", 0.08, "mass_movement")
+    assert r["landscape_type"] == "C-CO-VS"
+    assert L.classify_landscape_type("confined", 0.01, None)["landscape_type"] is None
+    # Bedrock and the other origins are not touched.
+    r = L.classify_landscape_type("unconfined", 0.01, "bedrock_sedimentary")
+    assert r["landscape_type"] == "U-BR-BC" and r["confidence"] == "medium"
+
+
+def test_partly_confined_leans_unconfined():
+    """When both the card's unconfined and confined types fit the slope,
+    the floor being wider than the channel picks the unconfined one, with
+    the confined one kept as the alternative."""
+    r = L.classify_landscape_type("partly confined", 0.01, "alluvial")
+    assert r["landscape_type"] == "U-AL-AD" and r["alternatives"] == ["C-AL-AD"]
+    assert r["confidence"] == "low" and "wider than the channel" in r["basis"]
+    # With colluvium mapped, the unconfined candidate is the floor's (AL) and
+    # the confined one the walls' (CO), and the slope decides between them.
+    r = L.classify_landscape_type("partly confined", 0.01, "mass_movement")
+    assert r["landscape_type"] == "U-AL-AD" and "hillslope" in r["basis"]
+    assert r["alternatives"] == ["C-CO-US"]
+    r = L.classify_landscape_type("partly confined", 0.09, "mass_movement")
+    assert r["landscape_type"] == "C-CO-VS"           # only it fits > 6%
+    r = L.classify_landscape_type("partly confined", 0.01, None)
+    assert r["landscape_type"] == "U-AL-AD" and r["alternatives"] == []
 
 
 def test_stream_codes_as_the_card_writes_them():

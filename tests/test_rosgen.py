@@ -94,6 +94,70 @@ def test_missing_material_is_unresolved_not_guessed():
     assert set(r["alternatives"]) == {"VIII", "IX"}
 
 
+def test_a_u_shape_on_alluvium_is_not_a_glacial_trough():
+    """Kingman (Oct 2026): 1,500 km of 'glacial trough' at 35 N, on alluvium
+    and colluvium, because a wash between two concave bajada flanks fits a
+    parabola as well as a trough does. A mapped material that is not till
+    argues against a trough; with no material the shape still says V, at
+    low confidence."""
+    from geolens.landscape.rosgen import classify_from_form, classify_valley_type
+
+    u = dict(side_slope=0.15, shape_n=2.0, vf_class_="narrow", relief_m=120.0,
+             asymmetry=0.0)
+    assert classify_from_form(material="glacial_till", **u)["valley_type"] == "V"
+    r = classify_from_form(material=None, **u)
+    assert r["valley_type"] == "V" and r["alternatives"] == ["II"]
+    assert r["confidence"] == "low"
+    assert classify_from_form(material="alluvial", **u) is None   # proxies decide
+    r = classify_valley_type("unconfined", 0.03, "alluvial",
+                             form=dict(side_slope=0.15, shape_n=2.0,
+                                       vf_class="narrow", valley_relief_m=120.0,
+                                       asymmetry=0.0))
+    assert r["valley_type"] == "VIII"
+    r = classify_from_form(material="mass_movement", **u)
+    assert r["valley_type"] == "II" and "not a glacial trough" in r["basis"]
+    # the same through the proxies, where a moderate U on alluvium used to
+    # be V too
+    r = classify_valley_type("partly confined", 0.03, "alluvial",
+                             form={"shape_n": 1.7})
+    assert r["valley_type"] != "V"
+    r = classify_valley_type("partly confined", 0.03, None,
+                             form={"shape_n": 1.7})
+    assert r["valley_type"] == "V" and r["confidence"] == "low"
+
+
+def test_a_broad_gentle_floor_is_alluvial_whatever_the_hillslope_map_says():
+    """The soils are read into a floor narrower than the map unit, so a
+    broad gentle valley 'built of colluvium' is the hillslope's unit over
+    alluvial fill: VIII at low confidence, not nothing. Lake beds or sand
+    would still make it X or IX."""
+    from geolens.landscape.rosgen import classify_from_form, classify_valley_type
+
+    b = dict(side_slope=0.03, shape_n=1.4, vf_class_="broad", relief_m=60.0,
+             asymmetry=0.0)
+    r = classify_from_form(material="mass_movement", **b)
+    assert r["valley_type"] == "VIII" and r["confidence"] == "low"
+    assert set(r["alternatives"]) == {"IX", "X"} and "hillslope" in r["basis"]
+    assert classify_from_form(material="residual", **b)["valley_type"] == "VIII"
+    assert classify_from_form(material="lacustrine", **b)["valley_type"] == "X"
+    assert classify_from_form(material=None, **b)["valley_type"] is None
+    # gentle side slopes that are not measurably broad: the confinement
+    # tells a gentle canyon (IV) from an open valley (VIII)
+    g = dict(side_slope=0.03, shape_n=1.4, vf_class_="narrow", relief_m=60.0,
+             asymmetry=0.0)
+    assert classify_from_form(material="residual", confinement="unconfined",
+                              **g)["valley_type"] == "VIII"
+    assert classify_from_form(material="residual", confinement="confined",
+                              **g)["valley_type"] == "IV"
+    assert classify_from_form(material="residual", **g)["valley_type"] is None
+    # and through the proxies
+    r = classify_valley_type("unconfined", 0.03, "mass_movement")
+    assert r["valley_type"] == "VIII" and r["confidence"] == "low"
+    r = classify_valley_type("unconfined", 0.003, "residual")
+    assert r["valley_type"] == "VIII" and set(r["alternatives"]) == {"X", "XI"}
+    assert classify_valley_type("unconfined", 0.03, None)["valley_type"] is None
+
+
 def test_type_six_is_never_asserted():
     """VI is structural control, which no DEM and no geologic map can see.
 

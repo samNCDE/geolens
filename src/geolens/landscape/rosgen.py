@@ -154,7 +154,8 @@ class ValleyTypeResult:
 def classify_from_form(side_slope: float | None, shape_n: float | None,
                        vf_class_: str | None,
                        relief_m: float | None, asymmetry: float | None,
-                       material: str | None = None) -> dict[str, Any] | None:
+                       material: str | None = None,
+                       confinement: str | None = None) -> dict[str, Any] | None:
     """Rosgen valley type from the valley's own cross-section form.
 
     This is the classification on its own terms. Every discriminator Rosgen
@@ -167,6 +168,9 @@ def classify_from_form(side_slope: float | None, shape_n: float | None,
     can fall back. It does NOT return a guess: on real terrain most sections
     never reach a crest, and a type asserted from a truncated measurement would
     be worse than an honest unresolved.
+
+    ``confinement`` (geolens's class) is used only where the form itself
+    cannot tell an open valley from a confined one of the same shape.
     """
     ss = side_slope if (side_slope is not None
                         and np.isfinite(side_slope)) else None
@@ -176,6 +180,7 @@ def classify_from_form(side_slope: float | None, shape_n: float | None,
         return None
 
     mat = material or "unknown"
+    known_mat = mat not in ("unknown", "", None)
     sc = side_slope_class(ss) if ss is not None else "unknown"
     broad = vf_class_ in ("broad", "very_broad")
     # A genuine intermediate band. The U threshold was 1.6, which is not a
@@ -187,6 +192,7 @@ def classify_from_form(side_slope: float | None, shape_n: float | None,
     v_shaped = n is not None and n < 1.3
     very_broad = vf_class_ == "very_broad"
     vi = asymmetry is not None and np.isfinite(asymmetry) and abs(asymmetry) > 0.35
+    conf = str(confinement or "").strip().lower()
 
     def why(extra=""):
         bits = []
@@ -198,9 +204,12 @@ def classify_from_form(side_slope: float | None, shape_n: float | None,
             bits.append(f"{rel:,.0f} m floor-to-divide")
         if vf_class_ and vf_class_ != "unknown":
             bits.append(f"Vf {vf_class_}")
+        if u_shaped and known_mat and mat not in _GLACIAL:
+            bits.append(f"U-shaped but {mat} material, not till, so not a "
+                        f"glacial trough")
         return "; ".join(bits) + (f". {extra}" if extra else "")
 
-    # -- a U-shaped trough is a glacial trough; nothing fluvial makes one -----
+    # -- a U-shaped trough with glacial till is a glacial trough -------------
     #
     # Any wall gradient, not just moderate ones. Real glacial troughs have wall
     # gradients of 0.6-1.0, which `side_slope_class` calls "very_steep" -- so
@@ -212,12 +221,26 @@ def classify_from_form(side_slope: float | None, shape_n: float | None,
     # a floor more than four times the valley's own depth. Yosemite, a textbook
     # trough, is about 1.7. A valley at 7.8 is an alluvial plain whatever its
     # flanks fit to, and the shape exponent alone must not override that.
+    #
+    # The shape alone is not enough either. "Nothing fluvial makes a U at
+    # valley scale" is true of a trough between rock walls; it is not true at
+    # 10 m over a desert piedmont, where a wash between two concave bajada
+    # flanks fits a parabola as well as any trough does. Kingman (Oct 2026)
+    # got 1,500 km of "glacial trough" on alluvium and colluvium at 35 N. A
+    # mapped material that is not till is evidence against a trough, so with
+    # one the U-shape is noted and the fluvial types below decide. Without
+    # any material the shape still names V, at low confidence, with II open.
     if u_shaped and sc != "gentle" and not very_broad:
         if mat in _GLACIAL:
             return out_dict("V", (), "high", why("Glacial till confirms it."))
-        return out_dict("V", ("II",), "medium",
-                        why("No glacial material mapped, so a broad colluvial "
-                            "valley (II) is not excluded."))
+        if not known_mat:
+            return out_dict("V", ("II",), "low",
+                            why("No material mapped: a U-shape names a "
+                                "trough, but at landscape scale a wash "
+                                "between concave flanks fits one too, and "
+                                "a broad colluvial valley (II) is not "
+                                "excluded. Supply geology."))
+        # a known, non-glacial material: carry on to the fluvial types below
 
     # -- broad and gentle: the depositional types ----------------------------
     #
@@ -236,6 +259,17 @@ def classify_from_form(side_slope: float | None, shape_n: float | None,
         if mat in _ALLUVIAL:
             return out_dict("VIII", ("IX",), "medium",
                             why("Alluvial fill; IX if this is outwash."))
+        # A broad, gentle floor is depositional whatever the map says of the
+        # hillslopes: colluvium or residuum here is the slope's map unit,
+        # read into a floor narrower than the unit. Of the depositional
+        # types, IX needs outwash or sand and X lacustrine fill, neither
+        # mapped, so VIII at low confidence rather than nothing.
+        if mat in _COLLUVIAL or mat in _BEDROCK:
+            return out_dict("VIII", ("IX", "X"), "low",
+                            why(f"A broad, gently sloping floor is alluvial "
+                                f"fill; the {mat} mapped is the hillslope's "
+                                f"unit. IX or X only if outwash, sand or "
+                                f"lake beds are mapped."))
         return out_dict(None, ("VIII", "IX", "X"), "low",
                         why("A broad, gently sloping valley. Which of "
                             "VIII/IX/X depends on depositional history, which "
@@ -287,6 +321,18 @@ def classify_from_form(side_slope: float | None, shape_n: float | None,
         if mat in _ALLUVIAL:
             return out_dict("VIII", ("IV",), "medium",
                             why("Gentle alluvial valley."))
+        # The form cannot tell a gentle canyon (IV) from an open valley
+        # (VIII); the valley-bottom width against the channel can.
+        if conf == "unconfined":
+            return out_dict("VIII", ("IV",), "low",
+                            why("Gentle side slopes and an unconfined "
+                                "floor: an open valley rather than a gentle "
+                                "canyon (IV)."))
+        if conf == "confined":
+            return out_dict("IV", ("VIII",), "low",
+                            why("Gentle side slopes and a confined floor: a "
+                                "gentle canyon rather than an open valley "
+                                "(VIII)."))
         return out_dict(None, ("IV", "VIII"), "low",
                         why("Gentle side slopes; confined (IV) and open (VIII) "
                             "valleys share this form."))
@@ -382,26 +428,26 @@ def classify_valley_type(
             side_slope=_num("side_slope"), shape_n=shape_n,
             vf_class_=f.get("vf_class"),
             relief_m=_num("valley_relief_m"), asymmetry=asym,
-            material=mat,
+            material=mat, confinement=confinement,
         )
         if from_form is not None:
             return from_form
 
     # --- otherwise fall back to the channel proxies --------------------------
     #
-    # A parabolic cross-section is a glacial trough. This is the one place the
-    # shape genuinely names the type on its own, because no fluvial process
-    # produces a U at valley scale.
+    # A parabolic cross-section with glacial till is a glacial trough. The
+    # shape alone is not (see classify_from_form): a mapped material that is
+    # not till argues against a trough, and no material leaves V and II open.
     if shape_n is not None and shape_n >= 1.6 and confinement != "unconfined":
         if mat in _GLACIAL:
             return out("V", (), "high",
                        f"U-shaped cross-section (n={shape_n:.2f}) and glacial "
                        f"till — glacial trough, both lines of evidence agree")
-        if mat in _ALLUVIAL or mat == "unknown" or not mat:
-            return out("V", ("II",), "medium",
+        if mat == "unknown" or not mat:
+            return out("V", ("II",), "low",
                        f"U-shaped cross-section (n={shape_n:.2f}) measured "
-                       f"floor-to-divide; no glacial material mapped, so a "
-                       f"broad colluvial valley (II) is not excluded")
+                       f"floor-to-divide and no material mapped: a glacial "
+                       f"trough (V), unless a broad colluvial valley (II)")
 
     # Persistent one-sided relief is the structural-control signature.
     vi_flag = asym is not None and abs(asym) > 0.35
@@ -510,6 +556,10 @@ def classify_valley_type(
         if mat in _ALLUVIAL:
             return out("VIII", ("IX",), "medium",
                        "moderate, unconfined, alluvial")
+        if mat in _COLLUVIAL or mat in _BEDROCK:
+            return out("VIII", ("IX",), "low",
+                       f"moderate and unconfined; the {mat} mapped is the "
+                       f"hillslope's unit, and an unconfined floor is alluvial")
         return out(None, ("VIII", "IX"), "low",
                    "moderate and unconfined: VIII and IX need material")
     if gentle:
@@ -544,6 +594,10 @@ def classify_valley_type(
     if mat in _ALLUVIAL:
         return out("VIII", ("X", "XI"), "medium",
                    "very gentle, alluvial, not especially broad")
+    if mat in _COLLUVIAL or mat in _BEDROCK:
+        return out("VIII", ("X", "XI"), "low",
+                   f"very gentle and unconfined; the {mat} mapped is the "
+                   f"hillslope's unit, and an unconfined floor is alluvial")
     return out(None, ("VIII", "X", "XI"), "low",
                "very gentle and unconfined: the broad lowland types are "
                "separated by depositional history, which needs material")

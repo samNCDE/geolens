@@ -193,18 +193,48 @@ def classify_landscape_type(confinement: Any, gradient: Any,
 
     if c not in ("unconfined", "partly confined", "confined"):
         return out(None, [], "low", "confinement unknown")
+    slope = "slope unknown" if pct is None else f"slope {pct:.1f}%"
+
+    # An unconfined valley floor is stream-built. The soils or geology map
+    # may still say colluvium, residuum or nothing over it: at map scale a
+    # floor narrower than the map unit takes the hillslope's unit, and the
+    # soils are fetched over the boundary, not the whole area. Kingman
+    # (Oct 2026) left 22% of its stream length without a landscape type that
+    # way. So the floor's material is taken as alluvial, at low confidence,
+    # with the map's word in the basis; a confined valley keeps the map's
+    # material, which there names the walls as the card means it to.
+    assumed = ""
+    map_origin, map_mat = origin, mat
+    if c in ("unconfined", "partly confined") and origin in (None, "CO", "RE"):
+        assumed = ("no material mapped" if origin is None
+                   else f"the soils map {mat}, the hillslope's unit")
+        assumed += "; an unconfined floor is stream-built, so alluvial (AL)"
+        origin, mat = "AL", "alluvial"
     if origin is None:
         return out(None, [], "low",
                    "no material: the card's types are named by what built "
                    "the valley" if not mat else
                    f"the card has no type for {mat} material")
     if c == "partly confined":
+        # The unconfined candidate is the floor's (alluvial when assumed);
+        # the confined one keeps the map's material, which names the walls.
         cands = (_candidates("U", origin, mat, pct, on_fan, shape_n)[:1]
-                 + _candidates("C", origin, mat, pct, on_fan, shape_n)[:1])
+                 + (_candidates("C", map_origin, map_mat, pct, on_fan, shape_n)
+                    if map_origin else [])[:1])
         fit = [k for k in cands if _slope_ok(k, pct) is not False]
         if len(fit) == 1:
             return out(fit[0], [k for k in cands if k != fit[0]], "low",
-                       f"partly confined; only {fit[0]} fits the slope")
+                       f"partly confined; only {fit[0]} fits the slope"
+                       + (f" ({assumed})" if assumed else ""))
+        if len(fit) == 2:
+            # A floor wider than the channel needs, if not by much: the
+            # channel can still shift and deposit, which is what the card's
+            # unconfined types describe. The confined one stays listed.
+            return out(fit[0], fit[1:], "low",
+                       f"partly confined, {slope}: the floor is wider than "
+                       f"the channel, so the unconfined type, with the "
+                       f"confined one as the alternative"
+                       + (f" ({assumed})" if assumed else ""))
         return out(None, cands, "low",
                    "partly confined: between the card's unconfined and "
                    "confined types")
@@ -213,7 +243,6 @@ def classify_landscape_type(confinement: Any, gradient: Any,
     if not cands:
         return out(None, [], "low",
                    f"the card has no {c} type built of {mat} material")
-    slope = "slope unknown" if pct is None else f"slope {pct:.1f}%"
     fits = [k for k in cands if _slope_ok(k, pct) is not False]
     # Evidence that leaves the card's own alternatives open.
     if on_fan and c == "unconfined" and origin == "AL":
@@ -225,12 +254,13 @@ def classify_landscape_type(confinement: Any, gradient: Any,
                    f"eolian, {slope}; the soils map does not say sand or "
                    f"loess")
     best = fits[0] if fits else cands[0]
-    conf = "medium" if fits else "low"
+    conf = "low" if assumed else "medium" if fits else "low"
     note = "" if fits else (f"; {slope} is outside its "
                             f"{FLUVIAL_LANDSCAPES[best][1][0]} "
                             f"{FLUVIAL_LANDSCAPES[best][1][1]:g}%")
     return out(best, [k for k in cands if k != best], conf,
-               f"{c}, {mat} material, {slope}{note}")
+               f"{c}, {assumed if assumed else mat + ' material'}, "
+               f"{slope}{note}")
 
 
 def stream_code(stream_type: Any, letter: Any = None,

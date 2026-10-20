@@ -128,9 +128,10 @@ class _Status:
             self.data["warnings"].append(text)
             self.save()
 
-    def unwarn(self, prefix: str) -> None:
-        """Drop the warnings a step that has now succeeded left behind."""
-        keep = [w for w in self.data["warnings"] if not w.startswith(prefix)]
+    def unwarn(self, text: str) -> None:
+        """Drop the warnings (containing ``text``) that a step now redone or
+        succeeded left behind."""
+        keep = [w for w in self.data["warnings"] if text not in w]
         if len(keep) != len(self.data["warnings"]):
             self.data["warnings"] = keep
             self.save()
@@ -700,6 +701,74 @@ def _data_step(step: str, root: Path, inside, st: "_Status",
     return info
 
 
+# The valley-type classification's revision. A project whose level A was
+# typed under an older one is re-typed when it is run again: the terrain,
+# valley form and fans are kept, only the crosswalk is redone (minutes, not
+# hours), and the level B stability of every HUC12 already done is judged
+# again against the new types.
+#   1  v0.35: Rosgen 1996 types plus the 2022 landscape types
+#   2  v0.37.1: a U-shape on alluvium or colluvium is not a glacial trough;
+#      a broad gentle floor under a hillslope's map unit is alluvial (VIII);
+#      the 2022 card: an unconfined floor is stream-built, partly confined
+#      leans unconfined
+TYPING = 2
+
+
+def _retype_valleys(root: Path, A: Path, st: "_Status", pa: dict) -> dict:
+    """Redo the valley types of a level A pass under the current TYPING,
+    from its saved valley form and fans, and re-judge the stable / unstable
+    form of the HUC12s level B has done. Returns the updated pass record."""
+    from .landscape.rosgen import rosgen_valley_types
+    from .landscape.stability import stream_stability
+
+    run = A / "run"
+    vform = run / "valley_form_dir" / "valley_form_segments.csv"
+    fans = run / "fans_dir" / "fans.gpkg"
+    note(f"project: valley types again under classification {TYPING} "
+         f"(was {pa.get('typing') or 1})")
+    with _out(run) as g:
+        vt = rosgen_valley_types(
+            pa["segments"], geology=pa.get("geology"),
+            fans=str(fans) if fans.exists() else None,
+            valley_form=str(vform) if vform.exists() else None, guard=g)
+    for old in ("Material resolved for only", "could not be resolved to a "
+                "single type", "valley form matched only"):
+        st.unwarn(old)
+    for w in vt.warnings:
+        st.warn(f"level A: {w}")
+    pa = dict(pa, valley_types=vt.segments, typing=TYPING)
+    try:
+        from . import api
+        from .landscape.valleyform import valley_catchments
+
+        terrain = api._run_terrain(run)
+        with _out(run) as g:
+            valley_catchments(terrain.flow_dir, pa["segments"],
+                              attributes=vt.segments, streams=terrain.streams,
+                              guard=g)
+    except Exception as exc:                                 # noqa: BLE001
+        st.warn(f"The valley extent polygons keep the earlier valley types "
+                f"(rebuilding them failed: {type(exc).__name__}: "
+                f"{str(exc)[:160]}).")
+    for code, rec in st.data["huc12"].items():
+        if rec.get("status") != "done" or not rec.get("stream_types"):
+            continue
+        if not Path(rec["stream_types"]).exists():
+            continue
+        try:
+            with _out(root / "B_huc12" / code) as g:
+                stab = stream_stability(vt.segments, rec["stream_types"],
+                                        guard=g)
+            rec["stability"] = stab["stability"]
+            rec["counts"] = stab.get("counts")
+        except Exception as exc:                             # noqa: BLE001
+            st.warn(f"HUC12 {code}: stable / unstable form could not be "
+                    f"judged again ({type(exc).__name__}: {str(exc)[:160]}).")
+    st.data["steps"]["pass_a"] = pa
+    st.save()
+    return pa
+
+
 def _slope_raster(pa: dict, A: Path) -> str | None:
     """The level A slope raster: from the pass record, or found in its run
     folder (a pass made before v0.37 did not record it)."""
@@ -884,8 +953,15 @@ def run_project(boundary: str, where: str | None = None,
                 valley_types=vt.get("segments"),
                 geology=(res.get("geology") or {}).get("path"),
                 slope=(res.get("terrain") or {}).get("slope"),
-                seconds=res.get("seconds"))
+                typing=TYPING, seconds=res.get("seconds"))
     pa = st.step("pass_a")
+    if (pa.get("typing") or 1) < TYPING and pa.get("valley_types"):
+        try:
+            pa = _retype_valleys(root, A, st, pa)
+        except Exception as exc:                             # noqa: BLE001
+            st.warn(f"The valley types could not be redone under "
+                    f"classification {TYPING} ({type(exc).__name__}: "
+                    f"{str(exc)[:200]}); they are as first typed.")
     reaches = gpd.read_file(pa["segments"])
     inside = hucs[hucs["role"] == "boundary"]
 

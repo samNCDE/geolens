@@ -413,6 +413,7 @@ def test_the_huc12_summary_brings_everything_together(tmp_path):
     assert w["soil_alluvial_share"] == pytest.approx(0.5, abs=0.001)
     assert w["soil_colluvial_share"] == pytest.approx(0.5, abs=0.001)   # renamed
     assert e["soil_colluvial_share"] == pytest.approx(1.0, abs=0.001)
+    assert w["soil_mapped_share"] == 1.0 and e["soil_mapped_share"] == 1.0
     assert w["hsg_B_share"] == pytest.approx(0.5, abs=0.001)
     assert e["hsg_D_share"] == pytest.approx(1.0, abs=0.001)       # C/D counts as D
     assert w["soil_k_mean"] == pytest.approx(0.3, abs=0.001)
@@ -432,6 +433,26 @@ def test_the_summary_with_only_the_huc12s(tmp_path):
     assert list(t["huc12"]) == ["150100000101", "150100000102"]
     assert set(t.columns) == {"huc12", "name", "km2", "in_boundary_share",
                               "lidar_share"}
+
+
+def test_soil_shares_are_of_the_mapped_part(tmp_path):
+    """Soils are fetched over the boundary, so a HUC12 on its edge is mapped
+    in part: shares are of the mapped part, and the table says how much
+    that is."""
+    soils = tmp_path / "soils.gpkg"
+    gpd.GeoDataFrame(
+        {"mukey": [1, 2], "material_class": ["alluvial", "residual"],
+         "hydgrpdcd": ["A", "B"]},
+        geometry=[box(400000, 3900000, 403000, 3910000),       # 30% of West
+                  box(403000, 3900000, 405000, 3910000)],      # 20% of West
+        crs=UTM).to_file(soils, driver="GPKG", layer="soils")
+    r = wsdata.huc12_summary(tmp_path / "m", _hucs(), soils=str(soils))
+    t = pd.read_csv(r["csv"], dtype={"huc12": str}).set_index("huc12")
+    w, e = t.loc["150100000101"], t.loc["150100000102"]
+    assert w["soil_mapped_share"] == pytest.approx(0.5, abs=0.001)
+    assert w["soil_alluvial_share"] == pytest.approx(0.6, abs=0.001)
+    assert w["hsg_B_share"] == pytest.approx(0.4, abs=0.001)
+    assert e["soil_mapped_share"] == 0.0 and pd.isna(e["soil_alluvial_share"])
 
 
 def test_the_steps_have_titles_and_sources():

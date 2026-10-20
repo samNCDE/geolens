@@ -104,7 +104,8 @@ def _utm(hucs):
 
 
 def _shares_by_huc(layer, hucs, value_col: str, utm, prefix: str):
-    """Area share of each value of ``value_col`` per HUC12 (overlay)."""
+    """Area share of each value of ``value_col`` per HUC12 (overlay), of the
+    part of the HUC12 the layer covers."""
     import geopandas as gpd
 
     a = gpd.overlay(hucs[["huc12", "geometry"]].to_crs(utm),
@@ -115,8 +116,7 @@ def _shares_by_huc(layer, hucs, value_col: str, utm, prefix: str):
     a["km2"] = a.geometry.area / 1e6
     t = a.pivot_table(index="huc12", columns=value_col, values="km2",
                       aggfunc="sum", fill_value=0.0)
-    total = hucs.set_index("huc12").to_crs(utm).geometry.area / 1e6
-    t = t.div(total.reindex(t.index), axis=0).clip(upper=1.0)
+    t = t.div(t.sum(axis=1), axis=0).clip(upper=1.0)
     t.columns = [f"{prefix}{c}" for c in t.columns]
     return t
 
@@ -213,7 +213,7 @@ def ecological_sites(soils_path: str, out_dir: Path, hucs=None,
     component that has one (NRCS sites preferred). Writes
     ``data/soils_ecosites.gpkg`` (the soils layer plus ``ecoclassid``,
     ``ecoclassname``, ``ecoclasstypename``, ``ecosite_pct``) and, per HUC12,
-    the dominant site and its share."""
+    the dominant site and its share of the HUC12's area that has a site."""
     import geopandas as gpd
     import pandas as pd
 
@@ -587,8 +587,9 @@ def huc12_summary(out_dir: Path, hucs, valley_types: str | None = None,
     - streams (level A): km, shares by confinement, the main valley types
       (1996) and fluvial landscape types (Rosgen 2022), and the share of
       stream length in alluvial landscape types (``*-AL-*``);
-    - soils (SSURGO): shares by material and hydrologic group, area-weighted
-      surface erodibility K, the dominant ecological site;
+    - soils (SSURGO): shares by material and hydrologic group (of the
+      HUC12's mapped area; ``soil_mapped_share`` says how much that is),
+      area-weighted surface erodibility K, the dominant ecological site;
     - slope (level A DEM): mean, and the share steeper than 20%;
     - stream form (level B, pilot HUC12s): km stable / unstable / check by
       the 1996 table and by the 2022 card;
@@ -665,13 +666,18 @@ def huc12_summary(out_dir: Path, hucs, valley_types: str | None = None,
                             so[[*cols, "geometry"]].to_crs(utm),
                             how="intersection", keep_geom_type=True)
             a["_w"] = a.geometry.area
-            total = h.set_index("huc12").to_crs(utm).geometry.area
+            # Shares are of the HUC12's mapped area: the soils were fetched
+            # over the boundary, so a HUC12 on its edge is mapped in part.
+            mapped = a.groupby("huc12")["_w"].sum()
+            whole = h.set_index("huc12").to_crs(utm).geometry.area
+            t["soil_mapped_share"] = (mapped / whole.reindex(mapped.index)) \
+                .clip(upper=1.0).reindex(t.index).fillna(0.0).round(3)
 
             def shares(values, prefix):
                 p = a.assign(_v=values).pivot_table(
                     index="huc12", columns="_v", values="_w", aggfunc="sum",
                     fill_value=0.0)
-                p = p.div(total.reindex(p.index), axis=0).clip(upper=1.0)
+                p = p.div(mapped.reindex(p.index), axis=0).clip(upper=1.0)
                 for k in p.columns:
                     t[f"{prefix}{k}_share"] = p[k].reindex(t.index).round(3)
 

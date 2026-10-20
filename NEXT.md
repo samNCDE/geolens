@@ -5,15 +5,24 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.37.0 beta. The full test suite passes on Linux with numba
+**State.** v0.37.1 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
-v0.35.0 is unzipped at `S:\geolens\gl33` (the folder name stayed) and is
-what the Kingman run uses. The v0.36 and v0.37 zips and git bundles
-(`geolens_v0.37.0.bundle`, holding v0.30.0 to v0.37.0) are in
-`S:\geolens\Claude outputs`. **While the Kingman run uses gl33, its code is
-not touched:** a release made during the run goes to Claude outputs only,
-and into gl33 once the run has stopped (a module swapped mid-run could mix
-versions in one process).
+The release is unzipped at `S:\geolens\gl33` (the folder name stayed; the
+changed files of each release are committed into it, never while a run
+uses it). The zips and git bundles (`geolens_v0.37.1.bundle`, holding
+v0.30.0 to v0.37.1) are in `S:\geolens\Claude outputs`.
+
+**The Kingman run (19 Oct, 3:57 pm to 6:23 pm Arizona, v0.35.0):** it
+ran to the end on its own in 3 h 26 min: boundary, 446 HUC12s, the 10 m
+DEM (1.2 GB, 70% of its grid), SSURGO (7,380 polygons), level A at 10 m
+(1 h 52 min: routing 15 min, valley form 38 min, fans 4 min, valley types
+15 min, valley extent 7 min; 86,783 reaches, 39,109 inside the boundary,
+22,686 km), the representative pilot (3 groups: 39 / 32 / 29% of the
+area), and level B on the three pilots on 1 m lidar at **3 minutes each**
+(download included), so all 273 HUC12s with lidar would take about 14
+hours. What the review found is in RUNNING.md ("What the first field
+office taught the classifiers") and fixed in v0.37.1; the fan search and
+the braided (D) calls are still open. Results: `S:\kingman\geolens`.
 
 **Step list:** the Claude Doc "geolens step list" holds the work queue, for
 Sam to review, approve and edit. Read it before choosing what to do next.
@@ -89,6 +98,52 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.37.1 (beta): what Kingman taught the classifiers
+
+The review of the first whole-landscape run (above), the same night:
+
+- 1,530 km (6.7%) of Kingman's stream length was Rosgen valley type V,
+  a glacial trough, on alluvium and colluvium at 35° N: the form classifier
+  took a parabolic cross-section as proof of a trough, and at 10 m a wash
+  between two concave bajada flanks fits one. V now needs glacial till; a
+  mapped material that is not till hands the call to the fluvial types
+  (the U-shape is noted in `basis`); no material keeps V at low
+  confidence with II open. Re-typed, V is 0.5%.
+- 22% of stream length had no 2022 landscape type ("the card has no
+  unconfined type built of mass_movement material", "no material") and
+  6% no 1996 type ("VIII|IX|X"): the soils map unit over a narrow floor is
+  the hillslope's. An unconfined floor is now taken as stream-built:
+  VIII at low confidence (IX, X open) and `U-AL-*` at low confidence with
+  the map's word in the basis; confined valleys keep the map's material.
+  Gentle, not-broad side slopes: IV when confined, VIII when unconfined.
+  Partly confined reaches lean to the card's unconfined type. Re-typed,
+  the unresolved landscape types are 5% and the 1996 ones 2%.
+- `project.TYPING` (now 2) is recorded with `pass_a`; a project typed
+  under an older revision is re-typed on the next run from its saved
+  valley form and fans (minutes), the valley extent polygons are rebuilt,
+  and the level B form of every HUC12 already done is judged again.
+- `huc12_summary`: soil shares are of the HUC12's mapped part, with
+  `soil_mapped_share` saying how much that is (the soils are fetched over
+  the boundary, not the whole HUC12).
+
+Open, from the same review (on the step list):
+
+- **Fans.** The search was built on a 49 km² DEM: its 3,000 m radius cap
+  and the slope floor it raises itself (to 4.9% at Kingman) exclude the
+  bajadas, which are 5 to 15 km long at 1 to 4%. 134 fans accepted, 1,190
+  candidates rejected, Type III under-called. The cap should scale with
+  the DEM and the floor should not rise above the regional fan slope.
+- **Braided (D).** 48% of the pilots' stream length is D or Db, typed on
+  width-to-depth alone (step 7 of the list). D is natural to `U-AL-AD` on
+  the 2022 card (`landscape_form` says check) and unstable for VIII on
+  the 1996 table (`form_status` says unstable: 42% of pilot length).
+  Sam's call which the map carries.
+- Confinement at 10 m: 89% of stream length is unconfined, 2% confined,
+  in country with real canyons. The valley bottom at 10 m over-widens
+  narrow canyons; the channel width is the generic relation. Level B on
+  lidar is where confinement is right; a 10 m confinement audit against
+  a lidar HUC12 would say how far to trust the rest.
 
 ## v0.37.0 (beta): the watershed data package inside the project run
 

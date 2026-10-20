@@ -765,6 +765,45 @@ project run types its valleys by the SSURGO soils it fetches over the
 boundary (`geology="ssurgo"`, the default from v0.35): the audits found USGS
 geology calls most valleys bedrock.
 
+### What the first field office taught the classifiers (v0.37.1)
+
+Kingman (41,000 km², 22,700 km of stream inside the boundary, 10 m) was
+the first run over a whole landscape, and three readings were wrong at
+that scale. Both classifiers now carry a revision number
+(`geolens.project.TYPING`); a project typed under an older one is re-typed
+when it is run again, from its saved valley form and fans, in minutes, and
+the stable / unstable form of every HUC12 level B has done is judged again.
+
+- **A U-shaped valley is a glacial trough only with glacial till.** At 10 m
+  over a desert piedmont a wash between two concave bajada flanks fits a
+  parabola as well as a trough does: 1,500 km of Kingman was "V" on
+  alluvium at 35° N. A mapped material that is not till now argues against
+  a trough and the fluvial types decide, with the U-shape noted in `basis`.
+  With no material at all the shape still says V, at low confidence, with
+  II open.
+- **An unconfined floor is stream-built.** The soils are read into a floor
+  narrower than the map unit, so a broad gentle valley "built of colluvium"
+  or residuum is the hillslope's unit over alluvial fill. The 1996 call is
+  VIII at low confidence (IX and X stay open: sand or lake beds would have
+  to be mapped), and on the 2022 card the floor's material is alluvial
+  (`U-AL-*`, low confidence, the map's word in `landscape_basis`); confined
+  valleys keep the map's material, which there names the walls. Gentle
+  side slopes that are not measurably broad are IV when confined and VIII
+  when unconfined. Partly confined reaches lean to the card's unconfined
+  type (the floor is wider than the channel needs), with the confined one
+  as the alternative. Kingman's unresolved landscape types fell from 22% of
+  stream length to 5%, the 1996 ones from 6% to 2%.
+- **Still open, for the next build:** the alluvial fan search was built on
+  a 49 km² DEM. Its 3,000 m radius cap and the slope floor it raises itself
+  (to 4.9% at Kingman) exclude Basin-and-Range bajadas, which are 5 to
+  15 km long at 1 to 4%: 134 fans were accepted and 1,190 candidates
+  rejected, so Type III is under-called there. And braided (D) is the most
+  common stream type on the lidar pilots (48% of their length), typed on
+  width-to-depth alone; D is natural to `U-AL-AD` on the 2022 card (so
+  `landscape_form` says check) and unstable for VIII on the 1996 table (so
+  `form_status` says unstable). Which reading the map should carry is a
+  field call.
+
 ### Erosion features — gullies
 
 **Bound the drainage area.** `max_drainage_km2` is the only criterion in the
@@ -1186,7 +1225,9 @@ the boundary, puts them beside what the project measured:
 - soils (SSURGO): shares by material (`soil_alluvial_share`,
   `soil_colluvial_share`, ...) and hydrologic group (`hsg_A_share` to
   `hsg_D_share`; a dual group counts as D), area-weighted surface
-  erodibility `soil_k_mean`;
+  erodibility `soil_k_mean`. The soils are fetched over the boundary, so a
+  HUC12 on its edge is mapped in part: the shares are of the mapped part,
+  and `soil_mapped_share` says how much of the HUC12 that is;
 - slope (the level A DEM): `slope_mean_pct` and `slope_over_20pct_share`;
 - stream form (level B, where it ran): km stable, unstable and check by
   the 1996 table (`form1996_*_km`) and by the 2022 card (`form2022_*_km`);
