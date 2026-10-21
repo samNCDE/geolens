@@ -375,8 +375,8 @@ def test_the_huc12_summary_brings_everything_together(tmp_path):
         crs=UTM).to_file(soils, driver="GPKG", layer="soils")
     stab = tmp_path / "stability.gpkg"
     gpd.GeoDataFrame(
-        {"huc12": ["150100000101"] * 2, "form_status": ["stable", "unstable"],
-         "landscape_form": ["natural", "disequilibrium"]},
+        {"huc12": ["150100000101"] * 2, "form_status": ["stable", "check"],
+         "form_status_1996": ["stable", "unstable"]},
         geometry=[LineString([(402000, 3902000), (402000, 3903000)]),
                   LineString([(403000, 3902000), (403000, 3904500)])],
         crs=UTM).to_file(stab, driver="GPKG", layer="stream_stability")
@@ -408,7 +408,7 @@ def test_the_huc12_summary_brings_everything_together(tmp_path):
     assert w["conf_unconfined_share"] == pytest.approx(2 / 3, abs=0.001)
     assert e["conf_partly_confined_share"] == pytest.approx(2 / 3, abs=0.001)
     assert w["valley_types_1996"] == "VIII 67%, II 33%"
-    assert e["landscape_types_2022"] == "U-AL-AF 67%, C-BR-CB 33%"
+    assert e["valley_types_2022"] == "U-AL-AF 67%, C-BR-CB 33%"
     assert w["alluvial_landscape_share"] == pytest.approx(2 / 3, abs=0.001)
     assert w["soil_alluvial_share"] == pytest.approx(0.5, abs=0.001)
     assert w["soil_colluvial_share"] == pytest.approx(0.5, abs=0.001)   # renamed
@@ -420,7 +420,7 @@ def test_the_huc12_summary_brings_everything_together(tmp_path):
     assert w["slope_mean_pct"] == pytest.approx(5.0, abs=0.1)       # 10 cols at 5%
     assert e["slope_over_20pct_share"] == pytest.approx(1.0, abs=0.01)
     assert w["form1996_stable_km"] == 1.0 and w["form1996_unstable_km"] == 2.5
-    assert w["form2022_disequilibrium_km"] == 2.5
+    assert w["form_stable_km"] == 1.0 and w["form_check_km"] == 2.5     # the card
     assert pd.isna(e["form1996_stable_km"])                        # no level B
     assert w["prism_ppt_mm"] == 250.0 and e["fire_burned_share"] == 0.4
     assert pd.isna(w["fire_burned_share"])

@@ -334,6 +334,38 @@ r = api.landscape_pass("dem_30m.tif", confined_max=14, partly_confined_max=47)
 Sizing: 3 M acres at 30 m is 13.5 M cells, roughly 2 minutes in one pass. At 10 m
 that is 121 M cells — tile by HUC8.
 
+**How the valleys are made, and what changed in v0.38.** The valley bottom
+is VBET-style evidence: HAND (height above the nearest channel; full
+credit at 2 m, none at 12 m, scaled up with drainage area) weighted 0.65
+and slope (full at 2%, none at 25%) weighted 0.35, cut at 0.65, gaps to
+250 m closed. Each reach's `valley_width_m` is its allocated share of that
+bottom over its length. Until v0.38 the confinement ratio divided that by
+the channel width, and the "valley extent" polygons were each reach's
+catchment -- every cell draining to it, which is a watershed (the Basin
+tool's answer), not a valley. The first whole-landscape run (Kingman, a
+Basin-and-Range field office at 10 m) showed what that costs: 89% of
+stream length "unconfined" in country with real canyons, and against the
+1 m lidar of the pilot HUC12s the HAND ratio tracked the channels'
+entrenchment at rho 0.38, while the valley floor width the cross-sections
+measure (`valley_form`) tracked it at 0.77. So from v0.38:
+
+- **confinement is measured from the sections' valley floor** where they
+  measured one (`confinement_basis` = `sections`; `valley_floor_width_m`),
+  with the HAND figures kept as `valley_width_hand_m` and
+  `confinement_ratio_hand` and used where no floor was measured;
+- **a project run calibrates the breaks to its own lidar**: after level B,
+  the 10 m ratio is fitted to the entrenchment classes of the reaches the
+  lidar measured (entrenched < 1.4 confined, 1.4-2.2 partly, > 2.2
+  unconfined), by a coordinate descent over every cut, length-weighted;
+  when the fitted breaks agree at least 5 points better they are applied
+  to every reach (`reclassify_confinement`), the valleys are re-typed and
+  the form judged again, and RESULTS.md shows the agreement table. On
+  three pilots the fit was unstable from one HUC12 to the next; on a whole
+  field office of lidar it is what the breaks should come from;
+- **the valley polygons are the valley bottom, split by reach**
+  (`valley_polygons`, from `valley_alloc.tif`), carrying the types.
+  `valley_catchments` still draws the watersheds for whoever wants them.
+
 ### If your CRS is in feet, read this
 
 Every parameter is in **metres** and is converted for you. That was true in
@@ -733,23 +765,27 @@ colluvial one. Each type has a slope range, the stream types natural to it,
 and those seen under disequilibrium. Source: Rosgen (2022), Wildland
 Hydrology field card, transcribed in `geolens.landscape.landscapes`.
 
-Every valley-types layer now carries, beside the 1996 types I to XI:
+**From v0.38 the 2022 type is the valley type.** Every valley-types layer
+carries:
 
 | Column | Meaning |
 |---|---|
-| `landscape_type` | the code, or empty when the evidence leaves more than one |
-| `landscape_name` | the card's name for it |
-| `landscape_alternatives` | the candidates still open, `U-AL-AF\|U-AL-IF` |
-| `landscape_confidence`, `landscape_basis` | how it was decided |
+| `valley_type`, `valley_type_desc` | the 2022 code and the card's name for it; empty when the evidence leaves more than one |
+| `alternatives` | the candidates still open, `U-AL-AF\|U-AL-IF` |
+| `confidence`, `basis` | how it was decided |
+| `valley_type_1996`, `valley_type_1996_desc`, `alternatives_1996`, `confidence_1996`, `basis_1996` | the 1996 type I to XI, beside it |
+| `landscape_type`, `landscape_name`, `landscape_alternatives`, `landscape_confidence`, `landscape_basis` | the 2022 call again, under the names v0.35 to v0.37 used |
 
-and every stable / unstable layer carries `landscape_form` and
-`landscape_note`: the reach's stream type against the card. `stable` is one
-of the type's natural stream types, `unstable` one it lists only under
-disequilibrium, `check` one it does not list (or lists both ways, like D in
-`U-AL-AD`). The match is on the stream type with its slope class, as the card
-writes it: `Bc` is not `B`. An unresolved type is judged under each
-candidate. `form_status` (the 1996 table) stays beside it until one is
-chosen.
+and every stable / unstable layer judges the reach's stream type against
+the card as `form_status` and `form_note` (`form_basis` says so): `stable`
+is one of the type's natural stream types, `unstable` one it lists only
+under disequilibrium, `check` one it does not list (or lists both ways,
+like D in `U-AL-AD`). The match is on the stream type with its slope class,
+as the card writes it: `Bc` is not `B`. An unresolved type is judged under
+each candidate. The 1996 table's judgement stays beside it as
+`form_status_1996` and `form_note_1996` (a custom association table still
+applies to that one). A layer typed before v0.38, whose `valley_type` is a
+1996 type, is judged by the table as before.
 
 What decides the type: confinement, the channel gradient (a stand-in for the
 valley slope the card means), the valley material, whether the reach is on
@@ -793,6 +829,10 @@ the stable / unstable form of every HUC12 level B has done is judged again.
   type (the floor is wider than the channel needs), with the confined one
   as the alternative. Kingman's unresolved landscape types fell from 22% of
   stream length to 5%, the 1996 ones from 6% to 2%.
+- **v0.38, from the same run, against the lidar pilots:** confinement from
+  the measured valley floor instead of the HAND area, breaks calibrated
+  to the lidar, valley polygons that are the valley bottom and not the
+  catchment, and the 2022 landscape type as *the* valley type (above).
 - **Still open, for the next build:** the alluvial fan search was built on
   a 49 km² DEM. Its 3,000 m radius cap and the slope floor it raises itself
   (to 4.9% at Kingman) exclude Basin-and-Range bajadas, which are 5 to
@@ -1116,8 +1156,9 @@ geolens project https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Na
 Options: `--level-b`, `--pilots`, `--pilot-by`, `--huc12s`, `--geology`
 (`ssurgo`, `auto`, `none`), `--curve`, `--threshold-km2`, `--hours`,
 `--no-plots`, `--no-soils`, `--data` (v0.37: `all`, `none`, or some of
-`fire,ecosites,prism,atlas14,rap`). A line or point boundary is buffered by
-250 m. In Python:
+`fire,ecosites,prism,atlas14,rap`), `--no-calibration` and
+`--keep-lidar-dem` (v0.38). A line or point boundary is buffered by 250 m.
+In Python:
 
 ```python
 r = api.run_project(
@@ -1150,7 +1191,15 @@ Level B order:
 - `"all"`, or `"listed"` with `huc12s="150301030201,..."`;
 - `"none"` for valleys only.
 
-`level_b_hours` stops level B cleanly at a time limit.
+`level_b_hours` stops level B cleanly at a time limit. With `"all"` each
+HUC12's 1 m mosaic (about 300 MB) is deleted once its channels are
+measured, unless `keep_lidar_dem=True`; a pilot or a list keeps them.
+
+After level B the 10 m confinement breaks are fitted to the lidar's
+entrenchment of the same reaches and, when they agree clearly better,
+applied to the whole area with the valleys re-typed (above, "How the
+valleys are made"); `calibrate_confinement=False` keeps the published
+breaks.
 
 The project folder holds:
 

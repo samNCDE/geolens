@@ -1317,3 +1317,71 @@ def valley_form(dem: str | Path,
                         else float("nan")),
         seconds=elapsed, warnings=warnings,
     )
+
+
+def valley_polygons(alloc_raster: str | Path,
+                    attributes: str | Path | None = None,
+                    out_prefix: str = "valley_extent",
+                    guard: Guard | None = None) -> str:
+    """The valley of a reach as a polygon: its share of the valley bottom.
+
+    :func:`valley_catchments` draws every cell that drains to a reach, which
+    is a watershed, not a valley -- the Basin tool's answer, and on Kingman
+    (Oct 2026) 560 MB of hillslope. This draws the valley bottom the
+    evidence extraction found (HAND and slope), split between the reaches
+    by the nearest-reach allocation ``classify_segments`` already made
+    (``valley_alloc.tif``: seg_id + 1 per valley-bottom cell), and carries
+    each reach's valley types on its polygon. Floor to the valley margin,
+    not to the ridgetop; the sections in :func:`valley_form` measure the
+    walls.
+
+    Writes ``<out_prefix>_dir/valley_extent.gpkg``.
+    """
+    import geopandas as gpd
+    import pandas as pd
+    import rasterio
+    from rasterio import features
+    from shapely.geometry import shape
+    from shapely.ops import unary_union
+
+    guard = guard or Guard.from_env()
+    t0 = time.monotonic()
+    with rasterio.open(str(guard.read_path(alloc_raster))) as src:
+        alloc = src.read(1)
+        transform, crs = src.transform, src.crs
+    parts: dict[int, list] = {}
+    for geom, value in features.shapes(alloc, mask=alloc > 0,
+                                       transform=transform):
+        parts.setdefault(int(value) - 1, []).append(shape(geom))
+    del alloc
+    ids = sorted(parts)
+    geoms = [unary_union(parts[i]) if len(parts[i]) > 1 else parts[i][0]
+             for i in ids]
+    gdf = gpd.GeoDataFrame({"seg_id": ids}, geometry=geoms, crs=crs)
+    # true metres, whatever the CRS's unit
+    mpu = 1.0
+    try:
+        from ..units import unit_info
+
+        mpu = float(unit_info(crs, abs(transform.a), abs(transform.e))
+                    .metres_per_unit or 1.0) if crs is not None else 1.0
+    except Exception:                                        # noqa: BLE001
+        mpu = 1.0
+    gdf["valley_area_m2"] = gdf.geometry.area * mpu * mpu
+    gdf["valley_area_km2"] = gdf["valley_area_m2"] / 1e6
+    if attributes is not None:
+        attr = gpd.read_file(str(guard.read_path(attributes)))
+        if "seg_id" in attr.columns:
+            cols = [c for c in attr.columns
+                    if c not in ("geometry", "valley_area_m2",
+                                 "valley_area_km2", "seg_id")]
+            gdf = gdf.merge(pd.DataFrame(attr[["seg_id"] + cols]), on="seg_id",
+                            how="left")
+    out_dir = Path(guard.write_path(f"{out_prefix}_dir")).with_suffix("")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "valley_extent.gpkg"
+    gdf.to_file(str(path), driver="GPKG", layer="valley_extent")
+    note(f"  valley polygons: {len(gdf):,} reaches, "
+         f"{gdf['valley_area_m2'].sum() / 1e6:,.1f} km2 of valley bottom, "
+         f"{time.monotonic() - t0:.1f}s")
+    return str(path)

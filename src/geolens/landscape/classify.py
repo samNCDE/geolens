@@ -300,6 +300,18 @@ def classify_segments(
     csv_out = out_dir / "segments_classified.csv"
     gdf.drop(columns="geometry").to_csv(csv_out, index=False)
 
+    # The valley bottom as each reach's own: the id of the reach every
+    # valley-bottom cell was allocated to (seg_id + 1; 0 outside). This is
+    # what valley_polygons draws the valleys from (v0.38): the valley, not
+    # the catchment.
+    from ..raster import gtiff_profile
+
+    alloc_out = out_dir / "valley_alloc.tif"
+    with rasterio.open(terrain.hand) as src:
+        aprof = gtiff_profile(src.profile.copy(), dtype="int32", nodata=0)
+    with rasterio.open(str(alloc_out), "w", **aprof) as dst:
+        dst.write(np.where(vb, alloc, 0).astype("int32"), 1)
+
     def _dist(col):
         vc = gdf[col].value_counts()
         return {str(k): int(v) for k, v in vc.items()}
@@ -529,3 +541,87 @@ def confinement_break_sweep(
             "with reclassify_confinement()."
         ),
     }
+
+
+def confinement_from_form(
+    segments: str | Path,
+    form_table: str | Path,
+    confined_max: float = CONFINED_MAX,
+    partly_confined_max: float = PARTLY_MAX,
+    out_prefix: str = "reclassified",
+    guard: Guard | None = None,
+) -> dict[str, Any]:
+    """Confinement from the valley floor the cross-sections measured.
+
+    ``valley_width_m`` is the HAND-based valley bottom's area over the reach
+    length: tractable at landscape scale, and at 10 m over a piedmont it is
+    the basin floor, not the channel's room. The valley form sections measure
+    the floor itself, from the thalweg out to where the ground rises. On
+    Kingman's lidar pilots (Oct 2026) that floor width tracked the lidar's
+    entrenchment ratio at rho 0.77 and the HAND ratio at 0.38, so where the
+    sections measured a floor it is what the confinement ratio divides by
+    the channel width.
+
+    Keeps the HAND figures as ``valley_width_hand_m`` and
+    ``confinement_ratio_hand``; adds ``valley_floor_width_m`` and
+    ``confinement_basis`` (``sections`` or ``hand area``); rewrites
+    ``confinement_ratio``, ``confinement`` and the Rosgen candidates. Writes
+    ``<out_prefix>_dir/segments_classified.gpkg`` (and .csv), the layer the
+    rest of the run then reads, like ``reclassify_confinement``.
+    """
+    import geopandas as gpd
+    import pandas as pd
+
+    t0 = time.monotonic()
+    guard = guard or Guard.from_env()
+    gdf = gpd.read_file(str(guard.read_path(segments)))
+    if "confinement_ratio" not in gdf.columns or "channel_width_m" not in gdf.columns:
+        raise GeolensError(f"{segments} is not a classified segments layer "
+                           f"(no confinement_ratio / channel_width_m).")
+    vf = pd.read_csv(str(guard.read_path(form_table)))
+    key = next((k for k in ("segment_id", "seg_id") if k in vf.columns), None)
+    if key is None or "valley_floor_width_m" not in vf.columns:
+        raise GeolensError(f"{form_table} is not a valley form segment table.")
+    floor = pd.to_numeric(vf.set_index(key)["valley_floor_width_m"],
+                          errors="coerce")
+    floor = floor[floor.index.notna()]
+    floor.index = floor.index.astype("int64")
+    seg_key = "seg_id" if "seg_id" in gdf.columns else "segment_id"
+    fw = floor.reindex(gdf[seg_key].astype("int64")).to_numpy("float64")
+
+    if "confinement_ratio_hand" not in gdf.columns:
+        gdf["valley_width_hand_m"] = gdf["valley_width_m"]
+        gdf["confinement_ratio_hand"] = gdf["confinement_ratio"]
+    cw = pd.to_numeric(gdf["channel_width_m"], errors="coerce").to_numpy("float64")
+    with np.errstate(invalid="ignore", divide="ignore"):
+        floor_ratio = np.where(np.isfinite(fw) & (fw > 0) & (cw > 0), fw / cw, np.nan)
+    hand_ratio = pd.to_numeric(gdf["confinement_ratio_hand"],
+                               errors="coerce").to_numpy("float64")
+    use_floor = np.isfinite(floor_ratio)
+    gdf["valley_floor_width_m"] = fw
+    gdf["confinement_ratio"] = np.where(use_floor, floor_ratio, hand_ratio)
+    gdf["confinement_basis"] = np.where(use_floor, "sections", "hand area")
+    gdf["confinement"] = [
+        _confinement_class(r, confined_max, partly_confined_max)
+        for r in gdf["confinement_ratio"]]
+    if "gradient_class" not in gdf.columns:
+        gdf["gradient_class"] = [_gradient_class(g) for g in gdf["gradient"]]
+    ros = [_rosgen_candidates(c, g, w) for c, g, w in
+           zip(gdf["confinement"], gdf["gradient_class"], gdf["valley_width_m"])]
+    gdf["rosgen_candidates"] = [r[0] for r in ros]
+    gdf["needs_geology"] = [r[1] for r in ros]
+
+    out_dir = Path(guard.write_path(f"{out_prefix}_dir")).with_suffix("")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    seg_out = out_dir / "segments_classified.gpkg"
+    gdf.to_file(str(seg_out), driver="GPKG")
+    gdf.drop(columns="geometry").to_csv(str(out_dir / "segments_classified.csv"),
+                                        index=False)
+    n_floor = int(use_floor.sum())
+    counts = {str(k): int(v) for k, v in gdf["confinement"].value_counts().items()}
+    note(f"  confinement from the measured valley floor for {n_floor:,} of "
+         f"{len(gdf):,} reaches: {counts}")
+    return {"segments": str(seg_out), "n_from_sections": n_floor,
+            "n_segments": int(len(gdf)), "confinement_counts": counts,
+            "breaks": [confined_max, partly_confined_max],
+            "seconds": round(time.monotonic() - t0, 1)}

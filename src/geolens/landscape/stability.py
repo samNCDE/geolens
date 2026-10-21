@@ -248,22 +248,29 @@ def stream_stability(valley_types: str | Path, stream_types: str | Path,
                            "valley_types.gpkg and stream_types.gpkg of one run.")
     vcols = [c for c in ("valley_type", "alternatives", "rosgen_candidates",
                          "confidence", "basis", "landscape_type",
-                         "landscape_name", "landscape_alternatives")
+                         "landscape_name", "landscape_alternatives",
+                         "valley_type_1996", "alternatives_1996")
              if c in vt.columns]
     v = pd.DataFrame(vt[[key] + vcols]).rename(columns={
         "confidence": "valley_confidence", "basis": "valley_basis",
         "alternatives": "valley_alternatives"})
     g = st.merge(v, on=key, how="left")
-    alt_col = ("valley_alternatives" if "valley_alternatives" in g.columns
+    # The 1996 table judges the 1996 type. From v0.38 the layer's
+    # valley_type is the 2022 landscape type and the 1996 one is beside it;
+    # an older layer has only the 1996 type as valley_type.
+    old = "valley_type_1996" if "valley_type_1996" in g.columns else "valley_type"
+    old_alt = ("alternatives_1996" if "alternatives_1996" in g.columns else
+               "valley_alternatives" if "valley_alternatives" in g.columns
                else "rosgen_candidates")
-    out = [_combined(r.get("valley_type"),
-                     r.get(alt_col) if pd.isna(r.get("valley_type")) else None,
+    records = g.to_dict("records")
+    out = [_combined(r.get(old),
+                     r.get(old_alt) if pd.isna(r.get(old)) else None,
                      r.get("stream_letter"), table)
-           for r in g.to_dict("records")]
-    g["form_status"] = [o[0] for o in out]
-    g["form_note"] = [o[1] for o in out]
-    # The same question against Rosgen's 2022 fluvial landscape types, side
-    # by side with the 1996 valley types until one is chosen.
+           for r in records]
+    g["form_status_1996"] = [o[0] for o in out]
+    g["form_note_1996"] = [o[1] for o in out]
+    # The judgement the map carries: Rosgen's 2022 card, when the layer has
+    # the landscape types; the 1996 table otherwise.
     if "landscape_type" in g.columns:
         from .landscapes import landscape_form, stream_code
 
@@ -272,9 +279,16 @@ def stream_stability(valley_types: str | Path, stream_types: str | Path,
                              stream_code(r.get("stream_type"),
                                          r.get("stream_letter"),
                                          r.get("slope_class")))
-              for r in g.to_dict("records")]
-        g["landscape_form"] = [o[0] for o in lf]
-        g["landscape_note"] = [o[1] for o in lf]
+              for r in records]
+        g["form_status"] = [o[0] for o in lf]
+        g["form_note"] = [o[1] for o in lf]
+        g["form_basis"] = "Rosgen (2022) fluvial landscape types card"
+    else:
+        g["form_status"] = g["form_status_1996"]
+        g["form_note"] = g["form_note_1996"]
+        g["form_basis"] = source
+    g["landscape_form"] = g["form_status"]          # the older column name
+    g["landscape_note"] = g["form_note"]
 
     def _conf(a, b):
         ra = _RANK.get(str(a), None)
@@ -314,17 +328,16 @@ def stream_stability(valley_types: str | Path, stream_types: str | Path,
     except Exception:                                        # noqa: BLE001
         pass
     counts = g["form_status"].value_counts().to_dict()
-    lcounts = (g["landscape_form"].value_counts().to_dict()
-               if "landscape_form" in g.columns else {})
+    counts_1996 = g["form_status_1996"].value_counts().to_dict()
     km = (g.assign(_km=g.geometry.length)
           .groupby("form_status")["_km"].sum())
-    note(f"  stream form: {counts}" + (f" (judged with {source})"
-                                       if table_path else ""))
-    if lcounts:
-        note(f"  by Rosgen's 2022 landscape types: {lcounts}")
+    note(f"  stream form: {counts}")
+    note(f"  by the 1996 table: {counts_1996}" + (f" (judged with {source})"
+                                                 if table_path else ""))
     return {"stability": str(path),
             "counts": {str(k): int(v) for k, v in counts.items()},
-            "landscape_counts": {str(k): int(v) for k, v in lcounts.items()},
+            "counts_1996": {str(k): int(v) for k, v in counts_1996.items()},
+            "landscape_counts": {str(k): int(v) for k, v in counts.items()},
             "by_confidence": {str(k): int(v) for k, v in
                               g["form_confidence"].value_counts().items()},
             "length_by_status_crs": {str(k): float(v) for k, v in km.items()},

@@ -738,14 +738,12 @@ def _retype_valleys(root: Path, A: Path, st: "_Status", pa: dict) -> dict:
         st.warn(f"level A: {w}")
     pa = dict(pa, valley_types=vt.segments, typing=TYPING)
     try:
-        from . import api
-        from .landscape.valleyform import valley_catchments
+        from .landscape.pipeline import _valley_alloc_for
+        from .landscape.valleyform import valley_polygons
 
-        terrain = api._run_terrain(run)
         with _out(run) as g:
-            valley_catchments(terrain.flow_dir, pa["segments"],
-                              attributes=vt.segments, streams=terrain.streams,
-                              guard=g)
+            valley_polygons(_valley_alloc_for(pa["segments"]),
+                            attributes=vt.segments, guard=g)
     except Exception as exc:                                 # noqa: BLE001
         st.warn(f"The valley extent polygons keep the earlier valley types "
                 f"(rebuilding them failed: {type(exc).__name__}: "
@@ -767,6 +765,190 @@ def _retype_valleys(root: Path, A: Path, st: "_Status", pa: dict) -> dict:
     st.data["steps"]["pass_a"] = pa
     st.save()
     return pa
+
+
+# -- confinement calibrated to the lidar --------------------------------------------
+
+# Rosgen's entrenchment-ratio classes, measured on the lidar sections:
+# entrenched (< 1.4), moderately entrenched (1.4 to 2.2), slightly (> 2.2).
+ER_BREAKS = (1.4, 2.2)
+_ER_TO_CONF = ("confined", "partly confined", "unconfined")
+PUBLISHED_BREAKS = (2.0, 5.0)
+
+
+def _confinement_agreement(ratio, lidar, weight, breaks) -> float:
+    """Length-weighted share of reaches whose 10 m class under ``breaks``
+    matches the lidar's."""
+    import numpy as np
+
+    b1, b2 = breaks
+    cls = np.where(ratio <= b1, 0, np.where(ratio <= b2, 1, 2))
+    return float((weight * (cls == lidar)).sum() / weight.sum())
+
+
+def fit_confinement_breaks(ratio, lidar_class, length=None,
+                           min_reaches: int = 30, min_per_class: int = 5
+                           ) -> dict:
+    """Breaks on the 10 m confinement ratio that agree best with the lidar's
+    entrenchment classes (0 confined, 1 partly, 2 unconfined) of the same
+    reaches. Returns the breaks, the agreement before (published breaks) and
+    after, and the confusion table, or ``skipped`` with the reason when the
+    lidar does not cover enough.
+
+    The two breaks are fitted by coordinate descent from the published
+    ones: with one fixed, every cut between two neighbouring ratios is
+    scored at once by cumulative sums, so tens of thousands of reaches take
+    a moment. Length-weighted: a long reach counts for its length."""
+    import numpy as np
+
+    r = np.asarray(ratio, dtype="float64")
+    c = np.asarray(lidar_class, dtype="int64")
+    w = np.ones_like(r) if length is None else np.asarray(length, dtype="float64")
+    ok = np.isfinite(r) & np.isfinite(w) & (w > 0)
+    r, c, w = r[ok], c[ok], w[ok]
+    counts = [int((c == k).sum()) for k in range(3)]
+    if len(r) < min_reaches or min(counts) < min_per_class:
+        return {"skipped": f"{len(r)} reaches measured on lidar with "
+                           f"{counts[0]} entrenched, {counts[1]} moderately and "
+                           f"{counts[2]} slightly entrenched: at least "
+                           f"{min_reaches} with {min_per_class} in each class "
+                           f"are needed", "n": int(len(r))}
+    before = _confinement_agreement(r, c, w, PUBLISHED_BREAKS)
+    order = np.argsort(r, kind="stable")
+    rs, cs, ws = r[order], c[order], w[order]
+    # cut k (0..n) = between rs[k-1] and rs[k]: reaches [:k] are at or below
+    cum = [np.concatenate([[0.0], np.cumsum(ws * (cs == m))]) for m in range(3)]
+    total = w.sum()
+    cuts = np.concatenate([[rs[0] - 1.0], (rs[:-1] + rs[1:]) / 2.0, [rs[-1] + 1.0]])
+
+    def idx(b):                       # the cut index for a break value
+        return int(np.searchsorted(rs, b, side="right"))
+
+    def scan_b1(k2):                  # best k1 <= k2 with k2 fixed
+        k = np.arange(0, k2 + 1)
+        score = cum[0][k] + (cum[1][k2] - cum[1][k]) + (cum[2][-1] - cum[2][k2])
+        best = int(np.argmax(score))
+        return best, float(score[best])
+
+    def scan_b2(k1):                  # best k2 >= k1 with k1 fixed
+        k = np.arange(k1, len(rs) + 1)
+        score = cum[0][k1] + (cum[1][k] - cum[1][k1]) + (cum[2][-1] - cum[2][k])
+        best = int(np.argmax(score))
+        return k1 + best, float(score[best])
+
+    k1, k2 = idx(PUBLISHED_BREAKS[0]), idx(PUBLISHED_BREAKS[1])
+    best = -1.0
+    for _ in range(6):
+        k1, s1 = scan_b1(k2)
+        k2, s2 = scan_b2(k1)
+        if s2 <= best + 1e-9:
+            break
+        best = s2
+    b1, b2 = float(cuts[k1]), float(cuts[k2])
+    after = best / total
+    cls = np.where(r <= b1, 0, np.where(r <= b2, 1, 2))
+    table = {_ER_TO_CONF[k]: {_ER_TO_CONF[m]: int(((c == k) & (cls == m)).sum())
+                              for m in range(3)} for k in range(3)}
+    return {"breaks": [round(b1, 2), round(b2, 2)], "n": int(len(r)),
+            "agreement_before": round(before, 3), "agreement_after": round(after, 3),
+            "table": table, "lidar_classes": counts}
+
+
+def _lidar_entrenchment(st: "_Status") -> "pd.DataFrame | None":
+    """seg_id, entrenchment ratio and length of every reach level B measured
+    on lidar sections (not from the regional curve alone)."""
+    import pandas as pd
+
+    parts = []
+    for code, rec in st.data["huc12"].items():
+        p = rec.get("stream_types") if rec.get("status") == "done" else None
+        if not p or not Path(p).exists():
+            continue
+        g = _read_or_none(p, columns=["seg_id", "entrenchment_ratio",
+                                      "stream_basis", "n_sections_measured",
+                                      "length_m"])
+        if g is None or "entrenchment_ratio" not in g.columns:
+            continue
+        er = pd.to_numeric(g["entrenchment_ratio"], errors="coerce")
+        keep = er.notna()
+        if "stream_basis" in g.columns:
+            keep &= g["stream_basis"].astype(str) == "measured"
+        if "n_sections_measured" in g.columns:
+            keep &= pd.to_numeric(g["n_sections_measured"],
+                                  errors="coerce").fillna(0) >= 3
+        if keep.any():
+            parts.append(pd.DataFrame({
+                "seg_id": g.loc[keep, "seg_id"].astype("int64"),
+                "er": er[keep], "huc12": code,
+                "length_m": pd.to_numeric(g.loc[keep, "length_m"],
+                                          errors="coerce")
+                if "length_m" in g.columns else 1.0}))
+    return pd.concat(parts, ignore_index=True) if parts else None
+
+
+def _calibrate_confinement(st: "_Status", pa: dict) -> dict | None:
+    """The 10 m confinement breaks fitted to the lidar entrenchment classes
+    of the reaches level B has measured (see fit_confinement_breaks)."""
+    import numpy as np
+
+    lid = _lidar_entrenchment(st)
+    if lid is None:
+        return None
+    seg = _read_or_none(pa["segments"], columns=["seg_id", "confinement_ratio"])
+    if seg is None:
+        return None
+    j = lid.merge(seg[["seg_id", "confinement_ratio"]].assign(
+        seg_id=lambda d: d["seg_id"].astype("int64")), on="seg_id")
+    j = j[j["confinement_ratio"].notna()]
+    if j.empty:
+        return None
+    lidar = np.where(j["er"] < ER_BREAKS[0], 0,
+                     np.where(j["er"] <= ER_BREAKS[1], 1, 2))
+    out = fit_confinement_breaks(j["confinement_ratio"], lidar,
+                                 j["length_m"].fillna(1.0))
+    out["huc12s"] = sorted(set(j["huc12"]))
+    out["basis"] = ("Rosgen entrenchment ratio measured on the 1 m lidar "
+                    "sections (entrenched < 1.4 = confined, 1.4 to 2.2 = "
+                    "partly confined, > 2.2 = unconfined) against the 10 m "
+                    "confinement ratio of the same reaches")
+    return out
+
+
+def _confinement_lines(cal: dict | None) -> list[str]:
+    """RESULTS.md: how the confinement breaks were set."""
+    if not cal:
+        return []
+    out = ["## Confinement at 10 m, against the lidar", ""]
+    if cal.get("skipped"):
+        out += [f"The published breaks (confined at or under {PUBLISHED_BREAKS[0]:g}, "
+                f"partly confined at or under {PUBLISHED_BREAKS[1]:g} times the channel "
+                f"width) were kept: {cal['skipped']}.", ""]
+        return out
+    b1, b2 = cal["breaks"]
+    applied = cal.get("applied")
+    out += [f"{cal['n']} reaches in {len(cal.get('huc12s') or [])} HUC12s "
+            f"were measured on 1 m lidar as well as classed at 10 m. "
+            f"{cal['basis']}. The published breaks ({PUBLISHED_BREAKS[0]:g} "
+            f"and {PUBLISHED_BREAKS[1]:g}) agree with the lidar on "
+            f"{100 * cal['agreement_before']:.0f}% of their length; breaks of "
+            f"{b1:g} and {b2:g} agree on {100 * cal['agreement_after']:.0f}%."
+            + (" **The fitted breaks were applied to every level A reach**, "
+               "the valleys re-typed and the stable / unstable form judged "
+               "again." if applied else
+               " The gain is too small to act on, so the published breaks "
+               "stand."), "",
+            "| Lidar says | 10 m confined | 10 m partly confined | "
+            "10 m unconfined |", "|---|---|---|---|"]
+    for k in _ER_TO_CONF:
+        row = (cal.get("table") or {}).get(k) or {}
+        out.append(f"| {k} | " + " | ".join(str(row.get(m, 0))
+                                             for m in _ER_TO_CONF) + " |")
+    out += ["", "Entrenchment is a channel measure and confinement a valley "
+            "one, so this is a calibration of the 10 m classes to the best "
+            "lidar evidence there is, not a proof. A 10 m valley bottom is "
+            "wider than the channel's room on a piedmont, which is what the "
+            "fit corrects.", ""]
+    return out
 
 
 def _slope_raster(pa: dict, A: Path) -> str | None:
@@ -794,6 +976,8 @@ def run_project(boundary: str, where: str | None = None,
                 level_b_hours: float | None = None,
                 soils: bool = True,
                 data: str | list | None = "all",
+                calibrate_confinement: bool = True,
+                keep_lidar_dem: bool | None = None,
                 keep_lidar_tiles: bool = False,
                 timeout: int = 120,
                 guard: Guard | None = None) -> dict[str, Any]:
@@ -804,8 +988,13 @@ def run_project(boundary: str, where: str | None = None,
     together stand for the whole area, for landscape projects) or
     "unconfined" (the most unconfined valley, for stream projects).
     ``data``: the watershed data fetched per HUC12 (``wsdata``): "all",
-    "none", or some of fire, ecosites, prism, atlas14, rap. Resumes a
-    project folder that already has a ``project.json``."""
+    "none", or some of fire, ecosites, prism, atlas14, rap.
+    ``calibrate_confinement``: fit the 10 m confinement breaks to the
+    entrenchment the lidar measured in level B, and re-type the valleys
+    with them. ``keep_lidar_dem``: keep each HUC12's 1 m mosaic after its
+    channels are measured (default: only when level B is a pilot or a
+    list; "all" drops them, about 300 MB each). Resumes a project folder
+    that already has a ``project.json``."""
     import geopandas as gpd
 
     pilot_by = (pilot_by or "representative").lower()
@@ -1020,6 +1209,9 @@ def run_project(boundary: str, where: str | None = None,
         want = want[:max(int(pilot_count), len(done_b))]
     else:
         want = []
+    # Every HUC12's 1 m mosaic is about 300 MB; over a whole field office
+    # that is tens of GB for rasters whose sections are already measured.
+    keep_dem = keep_lidar_dem if keep_lidar_dem is not None else mode != "all"
     b_t0 = time.monotonic()
     for code in progress(want, label="level B HUC12s"):
         rec = st.data["huc12"].get(code) or {}
@@ -1045,10 +1237,50 @@ def run_project(boundary: str, where: str | None = None,
             continue
         st.data["huc12"][code] = _level_b(
             code, row, root, dem_run, pa, curve, section_plots,
-            lidar_min_fraction, keep_lidar_tiles)
+            lidar_min_fraction, keep_lidar_tiles, keep_dem)
         st.save()
 
-    # 8. merged layers, the HUC12 summary and the report ----------------------------------------
+    # 8. confinement at 10 m, calibrated to what the lidar measured ------------------------------
+    if calibrate_confinement:
+        try:
+            cal = _calibrate_confinement(st, pa)
+        except Exception as exc:                             # noqa: BLE001
+            cal = None
+            st.warn(f"The confinement calibration against the lidar failed "
+                    f"({type(exc).__name__}: {str(exc)[:200]}).")
+        if cal is None:
+            cal = {"skipped": "no reach has been measured on lidar sections "
+                              "yet (level B)", "n": 0}
+        if cal:
+            done = (st.data.get("confinement") or {}).get("breaks")
+            gain = cal.get("agreement_after", 0) - cal.get("agreement_before", 0)
+            worth = (cal.get("breaks") and gain >= 0.05
+                     and cal["breaks"] != list(PUBLISHED_BREAKS))
+            cal["applied"] = bool(worth)
+            if worth and cal["breaks"] != done:
+                from .landscape.classify import reclassify_confinement
+
+                b1, b2 = cal["breaks"]
+                note(f"project: confinement breaks {b1:g} and {b2:g} from the "
+                     f"lidar (agreement {100 * cal['agreement_before']:.0f}% "
+                     f"-> {100 * cal['agreement_after']:.0f}%)")
+                with _out(A / "run") as g:
+                    rc = reclassify_confinement(pa["segments"], b1, b2, guard=g)
+                pa = dict(pa, segments=rc.segments, confinement_breaks=[b1, b2],
+                          typing=0)                     # forces the re-typing
+                st.data["steps"]["pass_a"] = pa
+                st.data["confinement"] = cal
+                st.save()
+                pa = _retype_valleys(root, A, st, pa)
+                reaches = gpd.read_file(pa["segments"])
+            elif worth:
+                cal["applied"] = True                  # applied on an earlier run
+                st.data["confinement"] = cal
+            else:
+                st.data["confinement"] = cal
+            st.save()
+
+    # 9. merged layers, the HUC12 summary and the report ----------------------------------------
     merged = _merge(root, st, hucs, bnd, pa, cell_a, lidar_min_fraction)
     if st.step("soils"):
         merged["soils"] = st.step("soils")["path"]
@@ -1079,7 +1311,8 @@ def run_project(boundary: str, where: str | None = None,
 
 
 def _level_b(code, row, root: Path, dem_a: str, pa: dict, curve,
-             section_plots: bool, lidar_min: float, keep_tiles: bool) -> dict:
+             section_plots: bool, lidar_min: float, keep_tiles: bool,
+             keep_dem: bool = True) -> dict:
     """Stream types and stability for one HUC12, on lidar."""
     import geopandas as gpd
 
@@ -1133,6 +1366,17 @@ def _level_b(code, row, root: Path, dem_a: str, pa: dict, curve,
                "sections": stres.get("sections"),
                "stability": stab["stability"], "counts": stab.get("counts"),
                "seconds": round(time.monotonic() - t0, 1)}
+        if not keep_dem:
+            # The sections are measured and the plots drawn: the mosaic has
+            # done its work. Its tiles went already.
+            removed = 0
+            for p in Path(d["dem"]).parent.glob(Path(d["dem"]).name + "*"):
+                try:
+                    p.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+            out["lidar_dem_removed"] = bool(removed)
         return out
     except Exception as exc:                                 # noqa: BLE001
         return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:500],
@@ -1260,7 +1504,8 @@ def _report(root: Path, st: _Status, merged: dict, cell_a: float,
         f"Updated {_now()}. Re-running the project carries on from here.", "",
         "## What was run, at what resolution", "",
         "| Result | Cell size | Valid for |", "|---|---|---|",
-        f"| Valley bottom, confinement, valley types (level A) | {cell_a:g} m "
+        f"| Valley bottom, confinement, valley types (level A; Rosgen 2022 "
+        f"landscape types, the 1996 types beside them) | {cell_a:g} m "
         f"| the whole area; reaches with `valley_resolved` false are in "
         f"valleys under {3 * cell_a:g} m wide, below what {cell_a:g} m "
         f"cells resolve |",
@@ -1285,6 +1530,7 @@ def _report(root: Path, st: _Status, merged: dict, cell_a: float,
         ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())) or "none run",
         ""]
     lines += _pilot_lines(st.data.get("pilot") or {})
+    lines += _confinement_lines(st.data.get("confinement"))
     lines += _data_lines(st, want_data or [])
     if merged.get("huc12_summary"):
         lines += ["## The HUC12 summary", "",

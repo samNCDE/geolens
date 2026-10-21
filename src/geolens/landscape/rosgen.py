@@ -136,13 +136,14 @@ _BEDROCK = {"bedrock_igneous_metamorphic", "bedrock_sedimentary", "residual"}
 class ValleyTypeResult:
     segments: str
     n_segments: int
-    type_counts: dict[str, int]
+    type_counts: dict[str, int]              # Rosgen 2022 landscape types
     confidence_counts: dict[str, int]
     unresolved: int
     geology_used: bool
     fans_used: bool
     seconds: float
     warnings: list[str] = field(default_factory=list)
+    type_counts_1996: dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
@@ -842,30 +843,39 @@ def rosgen_valley_types(
             f"proxies — check that both were built from the same segmentation."
         )
 
-    seg["valley_type"] = [r["valley_type"] for r in rows]
-    seg["alternatives"] = ["|".join(r["alternatives"]) for r in rows]
-    seg["confidence"] = [r["confidence"] for r in rows]
-    seg["basis"] = [r["basis"] for r in rows]
-    seg["material_class"] = materials
-    seg["material_cover"] = covers
+    # The valley type is Rosgen's 2022 fluvial landscape type (v0.38): the
+    # newer classification is the one the work is done in. The 1996 types
+    # I to XI stay beside it as *_1996, and the landscape_* columns repeat
+    # the 2022 call for the tools that read them by that name.
+    seg["valley_type"] = [r["landscape_type"] for r in lrows]
     seg["valley_type_desc"] = [
-        VALLEY_TYPES.get(r["valley_type"], "") for r in rows
-    ]
-    seg["landscape_type"] = [r["landscape_type"] for r in lrows]
-    seg["landscape_name"] = [
         FLUVIAL_LANDSCAPES[r["landscape_type"]][0] if r["landscape_type"]
         else None for r in lrows]
-    seg["landscape_alternatives"] = ["|".join(r["alternatives"]) for r in lrows]
-    seg["landscape_confidence"] = [r["confidence"] for r in lrows]
-    seg["landscape_basis"] = [r["basis"] for r in lrows]
+    seg["alternatives"] = ["|".join(r["alternatives"]) for r in lrows]
+    seg["confidence"] = [r["confidence"] for r in lrows]
+    seg["basis"] = [r["basis"] for r in lrows]
+    seg["valley_type_1996"] = [r["valley_type"] for r in rows]
+    seg["valley_type_1996_desc"] = [
+        VALLEY_TYPES.get(r["valley_type"], "") for r in rows]
+    seg["alternatives_1996"] = ["|".join(r["alternatives"]) for r in rows]
+    seg["confidence_1996"] = [r["confidence"] for r in rows]
+    seg["basis_1996"] = [r["basis"] for r in rows]
+    seg["material_class"] = materials
+    seg["material_cover"] = covers
+    seg["landscape_type"] = seg["valley_type"]
+    seg["landscape_name"] = seg["valley_type_desc"]
+    seg["landscape_alternatives"] = seg["alternatives"]
+    seg["landscape_confidence"] = seg["confidence"]
+    seg["landscape_basis"] = seg["basis"]
 
     out_dir = Path(guard.write_path(f"{out_prefix}_dir")).with_suffix("")
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "valley_types.gpkg"
     seg.to_file(str(out_path), driver="GPKG")
 
-    types = pd.Series([r["valley_type"] for r in rows])
-    conf = pd.Series([r["confidence"] for r in rows])
+    types = pd.Series([r["landscape_type"] for r in lrows])
+    conf = pd.Series([r["confidence"] for r in lrows])
+    types_1996 = pd.Series([r["valley_type"] for r in rows])
     unresolved = int(types.isna().sum())
     if unresolved > len(seg) * 0.3:
         warnings.append(
@@ -879,6 +889,8 @@ def rosgen_valley_types(
         segments=str(out_path),
         n_segments=int(len(seg)),
         type_counts={str(k): int(v) for k, v in types.value_counts().items()},
+        type_counts_1996={str(k): int(v)
+                          for k, v in types_1996.value_counts().items()},
         confidence_counts={str(k): int(v) for k, v in conf.value_counts().items()},
         unresolved=unresolved,
         geology_used=geology is not None,

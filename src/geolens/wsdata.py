@@ -585,14 +585,14 @@ def huc12_summary(out_dir: Path, hucs, valley_types: str | None = None,
     - the HUC12: name, km2, share inside the boundary, lidar share, the
       pilot HUC12 that stands for it;
     - streams (level A): km, shares by confinement, the main valley types
-      (1996) and fluvial landscape types (Rosgen 2022), and the share of
-      stream length in alluvial landscape types (``*-AL-*``);
+      (Rosgen 2022 landscape types, and the 1996 types beside them), and
+      the share of stream length in alluvial landscape types (``*-AL-*``);
     - soils (SSURGO): shares by material and hydrologic group (of the
       HUC12's mapped area; ``soil_mapped_share`` says how much that is),
       area-weighted surface erodibility K, the dominant ecological site;
     - slope (level A DEM): mean, and the share steeper than 20%;
-    - stream form (level B, pilot HUC12s): km stable / unstable / check by
-      the 1996 table and by the 2022 card;
+    - stream form (level B): km stable / unstable / check by the 2022 card
+      (``form_*_km``) and by the 1996 table (``form1996_*_km``);
     - the watershed data steps: fire, PRISM climate, Atlas 14 storms, RAP
       cover now and its trend per decade.
 
@@ -639,8 +639,10 @@ def huc12_summary(out_dir: Path, hucs, valley_types: str | None = None,
                     for k in sh.columns:
                         t[f"{prefix}{str(k).replace(' ', '_')}_share"] = \
                             sh[k].reindex(t.index).round(3)
-            for col, name in (("valley_type", "valley_types_1996"),
-                              ("landscape_type", "landscape_types_2022")):
+            old = "valley_type_1996" if "valley_type_1996" in vt.columns \
+                else "valley_type"
+            for col, name in (("landscape_type", "valley_types_2022"),
+                              (old, "valley_types_1996")):
                 if col in vt.columns:
                     sh = (vt.assign(_v=vt[col].fillna("unresolved"))
                           .pivot_table(index="huc12", columns="_v",
@@ -708,8 +710,10 @@ def huc12_summary(out_dir: Path, hucs, valley_types: str | None = None,
         if "huc12" in stb.columns:
             stb["huc12"] = stb["huc12"].astype(str)
             stb["_km"] = stb.to_crs(utm).geometry.length / 1000.0
-            for col, prefix in (("form_status", "form1996_"),
-                                ("landscape_form", "form2022_")):
+            old = "form_status_1996" if "form_status_1996" in stb.columns \
+                else "form_status"
+            for col, prefix in (("form_status", "form_"),
+                                (old, "form1996_")):
                 if col in stb.columns:
                     p = stb.pivot_table(index="huc12", columns=col,
                                         values="_km", aggfunc="sum")

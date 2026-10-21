@@ -249,10 +249,13 @@ def test_the_landscape_pass_searches_for_fans_and_types_them_iii(tmp_path,
                         stream_types=False)
     assert out["fans"]["fan_count"] == 3
     vt = gpd.read_file(out["valley_types"]["segments"])
-    on_fans = vt[vt.valley_type == "III"]
-    assert len(on_fans) >= 3, vt.valley_type.value_counts().to_dict()
-    assert (on_fans.valley_type_basis.str.contains("alluvial fan")).all() \
-        if "valley_type_basis" in vt.columns else True
+    on_fans = vt[vt.valley_type_1996 == "III"]
+    assert len(on_fans) >= 3, vt.valley_type_1996.value_counts().to_dict()
+    assert (on_fans.basis_1996.str.contains("alluvial fan")).all()
+    # on the 2022 card a detected fan is an active fan with the inactive
+    # one open, not a blank
+    assert (on_fans.valley_type == "U-AL-AF").all()
+    assert (on_fans.alternatives == "U-AL-IF").all()
 
 
 def test_a_big_dem_is_searched_on_a_coarser_copy(tmp_path, monkeypatch,

@@ -150,9 +150,11 @@ def test_a_project_runs_in_two_levels_and_resumes(stubs, tmp_path):
     assert summary.loc["150100000101", "pilot_group"] == "150100000101"
     assert summary["stream_km"].gt(0).all()
     assert {"fire_value", "rap_value", "prism_value", "slope_mean_pct",
-            "landscape_types_2022", "valley_types_1996"} <= set(summary.columns)
-    assert summary.loc["150100000101", "form1996_stable_km"] > 0 or \
-        summary.loc["150100000101", "form1996_unstable_km"] > 0
+            "valley_types_2022", "valley_types_1996"} <= set(summary.columns)
+    assert any(summary.loc["150100000101", f"form_{k}_km"] > 0
+               for k in ("stable", "unstable", "check", "unknown")
+               if f"form_{k}_km" in summary.columns)
+    assert any(c.startswith("form1996_") for c in summary.columns)
     assert (out / "merged" / "huc12_summary.csv").exists()
     assert "## Watershed data by HUC12" in report
     assert "| fire history | NIFC InterAgency Fire Perimeter History | 2 fire perimeters |" in report
@@ -595,3 +597,111 @@ def test_running_out_of_memory_coarsens_and_carries_on(stubs, tmp_path,
     assert any("ran out of memory" in w for w in res["warnings"])
     vt = gpd.read_file(res["valley_types"])
     assert (vt["dem_cell_m"] == 60.0).all()
+
+
+def test_confinement_breaks_are_fitted_to_the_lidar():
+    """Three ranges of 10 m ratio that the lidar calls confined, partly and
+    unconfined: the fitted breaks fall between them, and the published 2 / 5
+    agree worse. Too few reaches, or an empty class, and the fit is skipped
+    with the reason."""
+    import numpy as np
+
+    rng = np.random.default_rng(1)
+    ratio = np.concatenate([rng.uniform(3, 8, 40), rng.uniform(9, 20, 60),
+                            rng.uniform(25, 90, 80)])
+    lidar = np.array([0] * 40 + [1] * 60 + [2] * 80)
+    f = project.fit_confinement_breaks(ratio, lidar)
+    b1, b2 = f["breaks"]
+    assert 8 <= b1 <= 9 and 19 <= b2 <= 25
+    assert f["agreement_after"] == 1.0 and f["agreement_before"] < 0.5
+    assert f["table"]["confined"]["confined"] == 40 and f["n"] == 180
+    assert f["lidar_classes"] == [40, 60, 80]
+    # length-weighted: a long reach counts for more
+    f2 = project.fit_confinement_breaks([1, 10, 30], [2, 2, 2], [1000, 1, 1],
+                                        min_reaches=3, min_per_class=0)
+    assert f2["agreement_before"] < 0.01                  # the long one is wrong
+    s = project.fit_confinement_breaks(ratio[:20], lidar[:20])
+    assert "skipped" in s and "at least 30" in s["skipped"]
+    s = project.fit_confinement_breaks(ratio, np.where(lidar == 0, 1, lidar))
+    assert "skipped" in s and "0 entrenched" in s["skipped"]
+
+
+def test_fitted_breaks_are_applied_and_the_valleys_retyped(stubs, tmp_path,
+                                                            monkeypatch):
+    """A calibration that improves agreement is applied to every level A
+    reach, the valleys are re-typed and the form judged again; one that does
+    not is reported and left alone; a second run does not redo it."""
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["field office"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    out = tmp_path / "proj"
+    kw = dict(level_b="pilot", pilot_count=1, stream_threshold_km2=3.0,
+              geology=None, section_plots=False, soils=False, data="none")
+    fake = {"breaks": [1.5, 3.0], "n": 120, "agreement_before": 0.4,
+            "agreement_after": 0.8, "huc12s": ["150100000101"], "basis": "test",
+            "table": {k: {m: 1 for m in project._ER_TO_CONF}
+                      for k in project._ER_TO_CONF}, "lidar_classes": [40, 40, 40]}
+    monkeypatch.setattr(project, "_calibrate_confinement", lambda st, pa: dict(fake))
+    retyped = []
+    real = project._retype_valleys
+    monkeypatch.setattr(project, "_retype_valleys",
+                        lambda *a, **k: retyped.append(1) or real(*a, **k))
+    res = project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    status = json.loads((out / "project.json").read_text())
+    assert status["confinement"]["applied"] is True
+    assert status["steps"]["pass_a"]["confinement_breaks"] == [1.5, 3.0]
+    assert "reclassified_dir" in status["steps"]["pass_a"]["segments"]
+    assert status["steps"]["pass_a"]["typing"] == project.TYPING
+    assert retyped == [1]
+    vt = gpd.read_file(res["valley_types"])
+    assert set(vt["confinement_basis"]) <= {"sections", "hand area"}
+    assert {"valley_floor_width_m", "confinement_ratio_hand",
+            "valley_type_1996"} <= set(vt.columns)
+    report = (out / "RESULTS.md").read_text()
+    assert "## Confinement at 10 m, against the lidar" in report
+    assert "breaks of 1.5 and 3 agree on 80%" in report
+    assert "**The fitted breaks were applied" in report
+    assert "| confined | 1 | 1 | 1 |" in report
+    # again: the same breaks, nothing redone
+    project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    assert retyped == [1]
+    # a fit not worth applying is reported and left alone
+    weak = dict(fake, breaks=[2.5, 6.0], agreement_after=0.42)
+    monkeypatch.setattr(project, "_calibrate_confinement", lambda st, pa: dict(weak))
+    project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    status = json.loads((out / "project.json").read_text())
+    assert status["confinement"]["applied"] is False
+    assert "The gain is too small" in (out / "RESULTS.md").read_text()
+    assert retyped == [1]
+    # and no calibration at all when asked
+    skip = dict(fake, skipped="4 reaches measured", breaks=None)
+    monkeypatch.setattr(project, "_calibrate_confinement", lambda st, pa: dict(skip))
+    project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    assert "were kept: 4 reaches measured" in (out / "RESULTS.md").read_text()
+    project.run_project(str(bnd), guard=Guard(out_dir=out),
+                        calibrate_confinement=False, **kw)
+    assert retyped == [1]
+
+
+def test_the_lidar_entrenchment_is_read_from_the_level_b_layers(stubs, tmp_path):
+    """The real pilot's stream types feed the calibration: measured reaches
+    with an entrenchment ratio and at least three sections."""
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["field office"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    out = tmp_path / "proj"
+    project.run_project(str(bnd), level_b="pilot", pilot_count=1,
+                        stream_threshold_km2=3.0, geology=None,
+                        section_plots=False, soils=False, data="none",
+                        guard=Guard(out_dir=out))
+    st = project._Status(out)
+    lid = project._lidar_entrenchment(st)
+    status = json.loads((out / "project.json").read_text())
+    assert status.get("confinement") is not None       # fitted or skipped, said
+    if lid is not None:
+        assert {"seg_id", "er", "huc12", "length_m"} <= set(lid.columns)
+        assert (lid["huc12"] == "150100000101").all()
+        cal = status["confinement"]
+        assert cal.get("breaks") or cal.get("skipped")

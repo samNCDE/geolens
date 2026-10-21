@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..safety import Guard, note
+from ..safety import Guard, note, GeolensError
 from .terrain import build_terrain
 from .valley import extract_valley_bottom
 from .network import extract_network
@@ -222,6 +222,8 @@ def run_landscape(
                 segment_length_m=segment_length_m, guard=guard)
             out.update(vt_out)
             warnings.extend(vt_warn)
+            if vt_out.get("classified_segments"):
+                out["classified"]["segments"] = vt_out["classified_segments"]
         except Exception as exc:                             # noqa: BLE001
             warnings.append(
                 f"Valley types could not be computed ({type(exc).__name__}: "
@@ -236,7 +238,7 @@ def run_landscape(
             from .streamtype import rosgen_stream_types
 
             st = rosgen_stream_types(
-                terrain.dem, classified.segments, dem_fine=dem_fine,
+                terrain.dem, out["classified"]["segments"], dem_fine=dem_fine,
                 geology=geology, regional_curve=regional_curve,
                 section_plots=section_plots,
                 bankfull_method=bankfull_method, guard=guard)
@@ -297,7 +299,7 @@ def valley_types_step(
     ``valley_types`` and ``valley_extent``.
     """
     from .rosgen import rosgen_valley_types
-    from .valleyform import valley_catchments, valley_form as _valley_form
+    from .valleyform import valley_polygons, valley_form as _valley_form
 
     guard = guard or Guard.from_env()
     out: dict[str, Any] = {}
@@ -316,6 +318,21 @@ def valley_types_step(
     rate = vform.n_measured / max(vform.n_sections, 1)
     note(f"  {vform.n_measured}/{vform.n_sections} sections reached "
          f"both divides ({rate:.0%})")
+
+    # Confinement from the floor the sections measured, not the HAND area
+    # (v0.38). The layer every later step reads is the rewritten one.
+    try:
+        from .classify import confinement_from_form
+
+        cf = confinement_from_form(classified_segments, vform.segment_table,
+                                   guard=guard)
+        classified_segments = cf["segments"]
+        out["confinement_form"] = cf
+        out["classified_segments"] = classified_segments
+    except Exception as exc:                                 # noqa: BLE001
+        warnings.append(
+            f"Confinement could not be measured from the valley floor "
+            f"({type(exc).__name__}: {exc}); the HAND-based classes stand.")
     if rate < 0.5:
         warnings.append(
             f"Only {rate:.0%} of valley sections reached a divide on both "
@@ -358,11 +375,13 @@ def valley_types_step(
     # The valley as an AREA, not a classified stream line. Everything above
     # produces a table about a valley attached to the channel down its
     # middle; opened on a map that is a coloured stream, which is not a
-    # valley and does not look like one.
+    # valley and does not look like one. The area is the valley bottom the
+    # evidence found, split between the reaches (v0.38) -- not the
+    # catchment, which is a watershed (valley_catchments still draws those).
     try:
-        out["valley_extent"] = valley_catchments(
-            terrain.flow_dir, classified_segments,
-            attributes=vtypes.segments, streams=terrain.streams, guard=guard)
+        out["valley_extent"] = valley_polygons(
+            _valley_alloc_for(classified_segments), attributes=vtypes.segments,
+            guard=guard)
     except Exception as exc:                                 # noqa: BLE001
         warnings.append(
             f"Valley extent polygons could not be built "
@@ -370,6 +389,17 @@ def valley_types_step(
             f"are unaffected."
         )
     return out, warnings
+
+
+def _valley_alloc_for(classified_segments: str | Path) -> Path:
+    """The valley allocation raster of a classified (or reclassified)
+    segments layer: beside it, or in the pass's classified_dir."""
+    seg = Path(classified_segments)
+    for d in (seg.parent, seg.parent.parent / "classified_dir"):
+        if (d / "valley_alloc.tif").exists():
+            return d / "valley_alloc.tif"
+    raise GeolensError(f"no valley_alloc.tif beside {seg} (a pass made "
+                       f"before v0.38 has none; run step 1 again)")
 
 
 # The fan search holds about ten full-size arrays and grows each fan cell by

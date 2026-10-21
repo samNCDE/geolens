@@ -1606,6 +1606,8 @@ def run_project(
     level_b_hours: float | None = None,
     soils: bool = True,
     data: str | list | None = "all",
+    calibrate_confinement: bool = True,
+    keep_lidar_dem: bool | None = None,
 ) -> dict[str, Any]:
     """A whole project area, any size: valleys everywhere, channels on lidar.
 
@@ -1634,7 +1636,13 @@ def run_project(
     precipitation, monsoon share, temperature), ``atlas14`` (NOAA storm
     depths) and ``rap`` (Rangeland Analysis Platform cover, 1986 on, with
     trends). They and the project's own results meet in ``huc12_summary``,
-    one row per HUC12.
+    one row per HUC12. ``calibrate_confinement`` (default True) fits the
+    10 m confinement breaks to the entrenchment the lidar measured in
+    level B and re-types the valleys with them; ``keep_lidar_dem`` keeps
+    each HUC12's 1 m mosaic after its channels are measured (default: only
+    for a pilot or a list; ``level_b="all"`` drops them, about 300 MB each).
+    The valley type is Rosgen's 2022 fluvial landscape type, with the 1996
+    type beside it as ``valley_type_1996``.
     """
     from .project import run_project as _rp
 
@@ -1644,7 +1652,9 @@ def run_project(
                regional_curve=regional_curve,
                lidar_min_fraction=lidar_min_fraction,
                section_plots=section_plots, level_b_hours=level_b_hours,
-               soils=soils, data=data)
+               soils=soils, data=data,
+               calibrate_confinement=calibrate_confinement,
+               keep_lidar_dem=keep_lidar_dem)
 
 
 def check_services(timeout: int = 20) -> dict[str, Any]:

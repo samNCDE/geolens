@@ -186,8 +186,8 @@ def test_valley_form_changes_the_classification(chain):
             chain["segments"], valley_form=chain["vf"]["segment_table"],
             out_prefix="chain_wf")["segments"])
 
-    a = bare["valley_type"].fillna("NONE").tolist()
-    b = withf["valley_type"].fillna("NONE").tolist()
+    a = bare["valley_type_1996"].fillna("NONE").tolist()
+    b = withf["valley_type_1996"].fillna("NONE").tolist()
     assert len(a) == len(b)
     changed = sum(1 for x, y in zip(a, b) if x != y)
     assert changed > 0.1 * len(a), (
@@ -195,8 +195,8 @@ def test_valley_form_changes_the_classification(chain):
         f"being read and discarded"
     )
 
-    unresolved_bare = float(bare["valley_type"].isna().mean())
-    unresolved_with = float(withf["valley_type"].isna().mean())
+    unresolved_bare = float(bare["valley_type_1996"].isna().mean())
+    unresolved_with = float(withf["valley_type_1996"].isna().mean())
     assert unresolved_with < unresolved_bare, (
         f"valley form did not reduce unresolved ({unresolved_with:.0%} vs "
         f"{unresolved_bare:.0%})"

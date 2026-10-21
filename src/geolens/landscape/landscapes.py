@@ -244,11 +244,14 @@ def classify_landscape_type(confinement: Any, gradient: Any,
         return out(None, [], "low",
                    f"the card has no {c} type built of {mat} material")
     fits = [k for k in cands if _slope_ok(k, pct) is not False]
-    # Evidence that leaves the card's own alternatives open.
+    # A detected fan: active or inactive is a field call the DEM cannot
+    # make, so the active type is given at low confidence with the inactive
+    # one open (a fan whose wash still crosses its surface is being built
+    # along that wash), rather than no type at all on the map.
     if on_fan and c == "unconfined" and origin == "AL":
-        return out(None, cands, "medium",
-                   f"on an alluvial fan, {slope}; active or inactive is a "
-                   f"field call")
+        return out(cands[0], cands[1:], "low",
+                   f"on a detected alluvial fan, {slope}; active (AF) or "
+                   f"inactive (IF) is a field call")
     if origin == "EO" and len(fits) > 1:
         return out(None, fits, "low",
                    f"eolian, {slope}; the soils map does not say sand or "

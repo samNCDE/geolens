@@ -439,9 +439,22 @@ def dig(d, *keys):
 
 # -- styling (postExecute) ---------------------------------------------------------
 
-_VALLEY = {"I": "#8c2d04", "II": "#d95f0e", "III": "#fec44f", "IV": "#993404",
-           "V": "#6a51a3", "VI": "#9e9ac8", "VII": "#e7298a", "VIII": "#1b9e77",
-           "IX": "#66c2a5", "X": "#2171b5", "XI": "#9ecae1"}
+_VALLEY_1996 = {"I": "#8c2d04", "II": "#d95f0e", "III": "#fec44f",
+                "IV": "#993404", "V": "#6a51a3", "VI": "#9e9ac8",
+                "VII": "#e7298a", "VIII": "#1b9e77", "IX": "#66c2a5",
+                "X": "#2171b5", "XI": "#9ecae1"}
+# Rosgen's 2022 fluvial landscape types (the valley type from v0.38):
+# unconfined alluvial in greens and yellows, the other unconfined origins
+# in blues, confined types in browns and reds.
+_VALLEY = {"U-AL-AD": "#1b9e77", "U-AL-AF": "#fec44f", "U-AL-IF": "#e6a117",
+           "U-AL-RD": "#66c2a5", "U-BR-BC": "#8c8c7a", "U-EO-SD": "#f1dca7",
+           "U-EO-LP": "#d9c38a", "U-GL-GO": "#9fb8ba", "U-GL-TP": "#c6dbdc",
+           "U-PE-CS": "#bcbddc", "U-LA-LD": "#6baed6",
+           "C-AL-AD": "#a6d854", "C-AL-IG": "#4d9221", "C-BR-BC": "#6e5a5a",
+           "C-EO-LH": "#c9a66b", "C-EO-SH": "#e0c08f", "C-EO-FD": "#b08d57",
+           "C-RE-FD": "#993404", "C-CO-FD": "#d95f0e", "C-CO-VS": "#8c2d04",
+           "C-CO-US": "#e7298a", "C-GL-GT": "#6a51a3", "C-GL-TP": "#9e9ac8",
+           "C-LA-AB": "#2171b5", "C-MA-AB": "#3182bd"}
 _CONFINEMENT = {"confined": "#b2182b", "partly confined": "#f4a582",
                 "unconfined": "#4393c3"}
 _GREY = "#b8b7b2"

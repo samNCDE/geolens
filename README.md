@@ -6,7 +6,7 @@ types, and judges whether each reach's stream type is a **stable or unstable
 form for its valley**. Every channel section it measures comes with a plot you
 can click on the map.
 
-*Beta (v0.37). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
+*Beta (v0.38). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
 or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 
 ---

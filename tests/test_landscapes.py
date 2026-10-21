@@ -29,8 +29,8 @@ def test_the_card_is_transcribed_whole():
 
 @pytest.mark.parametrize("conf,grad,mat,fan,shape,want,alts", [
     ("unconfined", 0.01, "alluvial", False, None, "U-AL-AD", []),
-    ("unconfined", 0.04, "alluvial", True, None, None,
-     ["U-AL-AF", "U-AL-IF"]),
+    ("unconfined", 0.04, "alluvial", True, None, "U-AL-AF",
+     ["U-AL-IF"]),
     ("unconfined", 0.01, "bedrock_sedimentary", False, None, "U-BR-BC", []),
     ("unconfined", 0.01, "playa", False, None, "U-LA-LD", []),
     ("confined", 0.03, "alluvial", False, None, "C-AL-AD", []),

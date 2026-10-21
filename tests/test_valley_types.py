@@ -354,7 +354,7 @@ def test_the_landscape_pass_produces_valley_types_by_default():
         "the landscape pass no longer produces valley types"
     )
     assert "valley_form" in r
-    counts = r["valley_types"]["type_counts"]
+    counts = r["valley_types"]["type_counts_1996"]
     assert counts, "valley types came back empty"
     assert len(counts) >= 3, (
         f"five valleys of quite different form produced {counts}"
@@ -469,9 +469,12 @@ def test_the_landscape_pass_produces_valley_polygons():
     )
 
 
-def test_the_polygons_span_the_valley_not_the_channel():
-    """A valley polygon should be kilometres across on this fixture, and the
-    total mapped area should be the same order as the DEM — not a sliver."""
+def test_the_polygons_are_the_valley_bottom_split_by_reach():
+    """v0.38: the valley polygons are the valley bottom the evidence found,
+    one piece per reach -- not the catchments (which were the Basin tool's
+    answer: every hillslope cell that drains to the reach). Their area is
+    the valley bottom's, they tile it without overlap, and each is wider
+    than the channel."""
     import geopandas as gpd
     import rasterio
     import geolens.api as api
@@ -481,17 +484,20 @@ def test_the_polygons_span_the_valley_not_the_channel():
     g = gpd.read_file(r["valley_extent"])
     with rasterio.open(str(DEM)) as src:
         dem_km2 = src.width * src.height * abs(src.res[0]) * abs(src.res[1]) / 1e6
-
     total = float(g["valley_area_km2"].sum())
-    assert total > 0.3 * dem_km2, (
-        f"the valley extent covers {total:.0f} km2 of a {dem_km2:.0f} km2 DEM "
-        f"— that is a ribbon along the channel, not the valleys"
-    )
-    # Reaches overlap where the valley bends, so some excess is expected; an
-    # enormous excess means polygons are reaching into neighbouring valleys.
-    assert total < 2.5 * dem_km2, (
-        f"the valley extent covers {total:.0f} km2 of a {dem_km2:.0f} km2 DEM"
-    )
+    bottom = float(r["valley"]["valley_area_km2"])
+    assert abs(total - bottom) < 0.02 * bottom + 0.01, (
+        f"the polygons cover {total:.2f} km2, the valley bottom {bottom:.2f}")
+    assert total < dem_km2, "the valley bottom cannot exceed the DEM"
+    assert g["seg_id"].is_unique
+    # the reach's own share: a polygon's area over its reach length is a
+    # width, and the widths are what the confinement started from
+    seg = gpd.read_file(r["classified"]["segments"]).set_index("seg_id")
+    w = (g.set_index("seg_id")["valley_area_m2"] / seg["length_m"]).dropna()
+    assert (w > 1.0).mean() > 0.9
+    # and the catchments are still there for whoever wants a watershed
+    from geolens.landscape.valleyform import valley_catchments
+    assert callable(valley_catchments)
 
 
 def test_section_bearings_are_stable_along_a_straight_valley():

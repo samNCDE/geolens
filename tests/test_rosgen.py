@@ -304,7 +304,10 @@ def test_run_with_geology_resolves_types(tmp_path, _env):
 
     r = rosgen_valley_types(str(sp), geology=str(gp), out_prefix="rt_geo").as_dict()
     out = gpd.read_file(r["segments"]).sort_values("seg_id")
-    assert list(out["valley_type"]) == ["X", "IX"], list(out["valley_type"])
+    assert list(out["valley_type_1996"]) == ["X", "IX"], list(out["valley_type_1996"])
     assert list(out["material_class"]) == ["lacustrine", "glacial_till"]
+    # the valley type the layer carries is the 2022 landscape type
+    assert list(out["valley_type"]) == ["U-LA-LD", "U-GL-TP"]
     assert r["unresolved"] == 0
-    assert r["type_counts"] == {"X": 1, "IX": 1}
+    assert r["type_counts"] == {"U-LA-LD": 1, "U-GL-TP": 1}
+    assert r["type_counts_1996"] == {"X": 1, "IX": 1}

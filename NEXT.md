@@ -5,14 +5,19 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.37.1 beta. The full test suite passes on Linux with numba
+**State.** v0.38.0 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
 The release is unzipped at `S:\geolens\gl33` (the folder name stayed; the
 changed files of each release are committed into it, never while a run
 uses it). The zips and git bundles (`geolens_v0.37.1.bundle`, holding
 v0.30.0 to v0.37.1) are in `S:\geolens\Claude outputs`.
 
-**The Kingman run (19 Oct, 3:57 pm to 6:23 pm Arizona, v0.35.0):** it
+**Sam's review (21 Oct):** the 1996 types had stayed the valley type; the
+valley extent was the catchment ("like the Basin tool"); confinement at
+10 m was wrong against the lidar. v0.38.0 answers all three (its entry
+below) and the whole project is run again overnight with it.
+
+**The first Kingman run (19 Oct, 3:57 pm to 6:23 pm Arizona, v0.35.0):** it
 ran to the end on its own in 3 h 26 min: boundary, 446 HUC12s, the 10 m
 DEM (1.2 GB, 70% of its grid), SSURGO (7,380 polygons), level A at 10 m
 (1 h 52 min: routing 15 min, valley form 38 min, fans 4 min, valley types
@@ -98,6 +103,59 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.38.0 (beta): the valley, measured; the 2022 type as the valley type
+
+Sam, 21 Oct, reviewing the Kingman results: the output still used the old
+(1996) valley types; how were the valleys generated, was it like the Basin
+tool's output ("there are better ways than that"); be self-critical and
+improve it; then an autonomous rerun overnight at 5 pm on the whole
+boundary, and a review.
+
+**How the valleys were made (v0.33 to v0.37):** VBET-style evidence (HAND
+weighted 0.65, slope 0.35, drainage-scaled thresholds), the valley bottom
+allocated to the nearest reach, `valley_width_m` = allocated area / reach
+length, confinement = that over a generic channel width with the published
+breaks 2 / 5, valley form measured on cross-sections floor-to-divide, and
+"valley extent" polygons = each reach's catchment (every cell draining to
+it). The catchment IS the Basin tool's answer: a watershed, not a valley.
+
+**Against the lidar pilots (443 reaches measured on 1 m sections):** the
+HAND-based ratio tracked the lidar entrenchment ratio at Spearman 0.38;
+the sections' valley floor width at 0.77 and the side slope at -0.74. The
+lidar called 45 km of the pilots entrenched; the 10 m pass called 35 of
+those km unconfined and 0.6 km confined. Fitting new breaks on the HAND
+ratio gained 2 points (53% -> 55% agreement) and did not transfer between
+HUC12s; on the floor ratio 54% -> 66% (70% on the raw floor width), with
+breaks 5.7 / 22.9 giving 10% confined, 37% partly, 52% unconfined over the
+field office instead of 1 / 7 / 92. Three pilots are too few for a stable
+fit (held out one at a time: 0.37 to 0.84); the whole-office lidar run is.
+
+What changed:
+
+- **The 2022 landscape type is `valley_type`** (`valley_type_1996` beside
+  it, `landscape_*` kept as aliases); `form_status` is judged on the card,
+  `form_status_1996` on the 1996 table; the toolbox colours the 2022 codes;
+  a detected fan is `U-AL-AF` with `U-AL-IF` open rather than blank.
+- **Confinement from the measured valley floor** (`confinement_from_form`,
+  run inside step 5 after the sections; `confinement_basis`,
+  `valley_floor_width_m`, the HAND figures kept as `*_hand`). The layer
+  every later step reads is `reclassified_dir/segments_classified.gpkg`.
+- **Breaks calibrated to the lidar in the project run**
+  (`fit_confinement_breaks`: coordinate descent over every cut,
+  length-weighted, from the published breaks; applied when 5 points
+  better; the agreement table in RESULTS.md; `calibrate_confinement`).
+- **Valley polygons = the valley bottom split by reach**
+  (`valley_polygons` from `classified_dir/valley_alloc.tif`, which
+  `classify_segments` now writes); `valley_catchments` stays as an API.
+- `keep_lidar_dem`: with level B "all" each HUC12's 1 m mosaic is deleted
+  once measured (about 300 MB each; 273 HUC12s would be 80 GB on S:).
+
+**Tonight (21 Oct, 5 pm Arizona):** a scheduled task starts the whole
+project again with v0.38 into `S:\kingman\geolens_v38` (the first run
+stays), level B on every HUC12 with lidar (about 14 h), data steps,
+calibration at the end, summary. Sam approves one ArcGIS Pro access prompt
+at 5 pm. Then the review.
 
 ## v0.37.1 (beta): what Kingman taught the classifiers
 

@@ -325,6 +325,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--data", default="all",
                    help="watershed data per HUC12: all (default), none, or "
                         "some of fire,ecosites,prism,atlas14,rap")
+    s.add_argument("--no-calibration", action="store_true",
+                   help="keep the published confinement breaks instead of "
+                        "fitting them to the lidar pilots")
+    s.add_argument("--keep-lidar-dem", action="store_true",
+                   help="keep every HUC12's 1 m mosaic (about 300 MB each) "
+                        "after its channels are measured")
 
     sub.add_parser("backends", help="show which flow-routing backends are installed")
     s = sub.add_parser("history", help="what has been run in this output directory")
@@ -614,7 +620,9 @@ def main(argv: list[str] | None = None) -> int:
                 geology=None if args.geology == "none" else args.geology,
                 regional_curve=args.curve, section_plots=not args.no_plots,
                 level_b_hours=args.hours, soils=not args.no_soils,
-                data=args.data)
+                data=args.data,
+                calibrate_confinement=not args.no_calibration,
+                keep_lidar_dem=True if args.keep_lidar_dem else None)
             _print({"project": r.get("project"),
                     "results": str(out / "RESULTS.md"),
                     "huc12_summary": r.get("huc12_summary"),

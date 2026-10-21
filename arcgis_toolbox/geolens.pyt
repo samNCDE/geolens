@@ -984,6 +984,11 @@ class RunProject(_Tool):
               category=OPT),
             P("SSURGO soils over the boundary", "soils", "GPBoolean",
               default=True, category=OPT),
+            P("Fit the 10 m confinement breaks to the lidar pilots",
+              "calibrate", "GPBoolean", default=True, category=OPT),
+            P("Keep each HUC12's 1 m DEM after its channels are measured "
+              "(about 300 MB each)", "keep_dem", "GPBoolean", default=False,
+              category=OPT),
             D("Valley types", "out_valley_types"),
             D("Stream types", "out_stream_types"),
             D("Stream-type sections", "out_sections"),
@@ -1027,6 +1032,8 @@ class RunProject(_Tool):
             "level_b_hours": v["hours"].value or None,
             "soils": bool(v["soils"].value),
             "data": ga.choice(v["data"], self.DATA),
+            "calibrate_confinement": bool(v["calibrate"].value),
+            "keep_lidar_dem": True if v["keep_dem"].value else None,
         }, out, "project")
         arcpy.AddMessage("level B: %s" % res.get("level_b"))
         arcpy.AddMessage("results: %s" % os.path.join(out, "RESULTS.md"))
