@@ -313,7 +313,7 @@ def detect_alluvial_fans(
     auto_slope_floor: bool = True,
     fan_slope_max: float = 0.15,
     min_above_base_m: float = 1.0,
-    max_radius_m: float = 3000.0,
+    max_radius_m: float | None = None,
     min_area_km2: float = 0.02,
     apex_window_m: float = 100.0,
     apex_gradient_ratio: float = 1.6,
@@ -468,6 +468,14 @@ def detect_alluvial_fans(
     _vm = float(_u.get("vertical_metres_per_unit") or 1.0)
     if _vm != 1.0:
         z = z * np.float32(_vm)
+    # The radius cap grows with the DEM: 3 km on a 49 km2 site, up to 12 km
+    # on a field office, where the piedmont fans are 5 to 15 km long and a
+    # 3 km cap rejected 1,190 of 1,324 candidates at Kingman (Oct 2026).
+    if max_radius_m is None:
+        short_m = min(z.shape) * cell
+        max_radius_m = float(min(12000.0, max(3000.0, 0.08 * short_m)))
+        note(f"radius cap {max_radius_m:,.0f} m for a {short_m / 1000:,.0f} km "
+             f"DEM")
     with rasterio.open(terrain.slope) as src:
         # Masked: the slope raster's nodata is -9999, and read raw it went into
         # the smoothing below and into the slope-floor percentile. On a DEM
@@ -508,7 +516,13 @@ def detect_alluvial_fans(
         note(f"slope floor {noise_floor:.3f} is terrain, not noise (little "
              f"flat ground here); fan_slope_min left at {fan_slope_min:g}")
     elif auto_slope_floor and fan_slope_min < noise_floor * 1.5:
-        fan_slope_min = float(noise_floor * 1.5)
+        # ... but never above 3%. On a Basin-and-Range field office a fifth
+        # of the ground is bajada at 2 to 4%, which is fan surface, not
+        # noise: Kingman (Oct 2026) had its floor raised to 4.9% and lost
+        # the fans the band was there to find. Real fans start about 1.5%;
+        # a floor of 3% keeps most of them and still excludes flat ground.
+        fan_slope_min = float(min(noise_floor * 1.5, max(requested_slope_min,
+                                                         0.03)))
         note(f"raised fan_slope_min {requested_slope_min:g} -> {fan_slope_min:.3f} "
              f"(flat ground here reads {noise_floor:.3f})")
         warnings.append(

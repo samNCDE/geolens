@@ -253,8 +253,8 @@ def _dist(v: float, rng: tuple[float | None, float | None], kind: str
 
 
 def classify_stream_type(entrenchment: float | None, width_depth: float | None,
-                         sinuosity: float | None, slope: float | None
-                         ) -> dict[str, Any]:
+                         sinuosity: float | None, slope: float | None,
+                         threads: float | None = None) -> dict[str, Any]:
     """Apply the Level II key to one reach: the nearest Rosgen type.
 
     **Entrenchment and width/depth delineate. Slope and sinuosity rank.**
@@ -286,7 +286,15 @@ def classify_stream_type(entrenchment: float | None, width_depth: float | None,
     # D only when width/depth was MEASURED above 40. Without that it
     # survives on everything else and sweeps up every straight low-gradient
     # reach: 1,376 reaches in a mountain catchment called "possibly braided".
+    # And (v0.38) only when the lidar sections hold more than one channel
+    # at bankfull: a wide shallow bed with one thread is C or F, however
+    # high its width/depth. Kingman's pilots had 48% of their length typed
+    # D on width/depth alone, at a regional depth of 0.2 m on a 16 m bed.
     braided_possible = "wd" in known and known["wd"] > 40.0
+    single_thread = (threads is not None and np.isfinite(threads)
+                     and threads < 1.5)
+    if braided_possible and single_thread:
+        braided_possible = False
 
     mis: dict[str, float] = {}
     hard_out: dict[str, float] = {}
@@ -357,6 +365,7 @@ def classify_stream_type(entrenchment: float | None, width_depth: float | None,
         "measured": sorted(known),
         "missing": missing,
         "braided_possible": braided_possible,
+        "single_thread": single_thread,
         "sinuosity_consistent": sin_consistent,
         "no_type_fits": no_fit,
         "confidence": conf,
@@ -584,6 +593,44 @@ def _wetted_area(o: np.ndarray, z: np.ndarray, stage: float,
     dd = np.concatenate([[0.0], np.maximum(stage - z[m], 0.0), [0.0]])
     trap = getattr(np, "trapezoid", None) or np.trapz
     return float(trap(dd, oo))
+
+
+def _threads(o: np.ndarray, z: np.ndarray, stage: float, left: float,
+             right: float, min_width: float, min_bar: float) -> int:
+    """How many separate channels the section holds below ``stage`` between
+    the banks: runs of wetted points at least ``min_width`` wide, parted by
+    ground at least ``min_bar`` above the stage. A braided (D) channel has
+    two or more; a single wide shallow bed has one. Measured on the lidar
+    section at the bankfull stage, which is where Rosgen's D is defined."""
+    m = (o >= left) & (o <= right)
+    oo, zz = o[m], z[m]
+    if oo.size < 3:
+        return 1 if oo.size else 0
+    wet = zz < stage
+    threads, i, n = [], 0, oo.size
+    while i < n:
+        if wet[i]:
+            j = i
+            while j + 1 < n and wet[j + 1]:
+                j += 1
+            threads.append((oo[i], oo[j]))
+            i = j + 1
+        else:
+            i += 1
+    if not threads:
+        return 0
+    # bars: the dry ground between two runs must stand above the stage
+    kept = [threads[0]]
+    for a, b in threads[1:]:
+        pa, pb = kept[-1]
+        between = (oo > pb) & (oo < a)
+        bar = float(zz[between].max() - stage) if between.any() else 0.0
+        if bar >= min_bar:
+            kept.append((a, b))
+        else:
+            kept[-1] = (pa, b)
+    dx = float(np.median(np.diff(oo))) if oo.size > 1 else 0.0
+    return sum(1 for a, b in kept if (b - a + dx) >= min_width)
 
 
 def regional_stage_width(offsets, elevations, max_depth: float, near: float,
@@ -1227,6 +1274,25 @@ def _type_reaches(seg, sections: list[dict], id_field: str, cell_m: float,
             d["md"].append(bf["mean_depth"])
             if row.get("width_depth_ratio"):
                 d["wd"].append(row["width_depth_ratio"])
+            try:
+                # Threads at the bankfull stage across the flood-prone
+                # width: the bankfull width itself is the first wetted run
+                # out from the thalweg, so within it there is always one.
+                # A braided belt's other channels lie beyond its bars.
+                _dx = float(np.median(np.diff(np.sort(o_m)))) if o_m.size > 1 \
+                    else 1.0
+                fl = bf.get("floodprone_left")
+                fr = bf.get("floodprone_right")
+                if fl is None or fr is None or not np.isfinite([fl, fr]).all():
+                    fl, fr = bf["left"], bf["right"]
+                nt = _threads(o_m, z_m, bf["thalweg_z"] + bf["max_depth"],
+                              min(fl, bf["left"]), max(fr, bf["right"]),
+                              min_width=max(2.0 * _dx, 0.5),
+                              min_bar=max(0.1, 0.25 * bf["max_depth"]))
+                row["threads"] = nt
+                d.setdefault("threads", []).append(nt)
+            except Exception:                                # noqa: BLE001
+                pass
             if bf["floodprone_width"] is not None:
                 er = bf["floodprone_width"] / bf["width"]
                 row.update({
@@ -1332,10 +1398,13 @@ def _type_reaches(seg, sections: list[dict], id_field: str, cell_m: float,
         else:
             basis = "slope_sinuosity"
             er = wd = float("nan")
+        th = d.get("threads") or []
+        n_threads = float(np.median(th)) if th else None
         cls = classify_stream_type(
             er if np.isfinite(er) else None,
             wd if np.isfinite(wd) else None,
-            sin, slope)
+            sin, slope,
+            threads=n_threads if basis == "measured" else None)
         conf = cls["confidence"]
         if basis != "measured" and conf != "low":
             conf = "low"        # a regional width is not a measurement
@@ -1378,6 +1447,8 @@ def _type_reaches(seg, sections: list[dict], id_field: str, cell_m: float,
             "sinuosity_consistent": cls["sinuosity_consistent"],
             "stream_missing": "|".join(cls["missing"]),
             "braided_possible": cls["braided_possible"],
+            "threads_at_bankfull": n_threads,
+            "single_thread": cls.get("single_thread", False),
             "stream_confidence": conf,
             "stream_type_desc": STREAM_TYPE_DESC.get(cls["stream_letter"]
                                                      or "", ""),

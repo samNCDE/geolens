@@ -5,7 +5,7 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.38.0 beta. The full test suite passes on Linux with numba
+**State.** v0.38.1 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
 The release is unzipped at `S:\geolens\gl33` (the folder name stayed; the
 changed files of each release are committed into it, never while a run
@@ -150,6 +150,15 @@ What changed:
   `classify_segments` now writes); `valley_catchments` stays as an API.
 - `keep_lidar_dem`: with level B "all" each HUC12's 1 m mosaic is deleted
   once measured (about 300 MB each; 273 HUC12s would be 80 GB on S:).
+- (v0.38.1, the same afternoon) **D needs more than one channel**: threads
+  counted on the lidar section at the bankfull stage across the
+  flood-prone width (`_threads`; the bankfull width itself is the first
+  wetted run out from the thalweg, so it always holds one). On pilot
+  150302020405, 30 of 32 D reaches were single-thread: they become C or F
+  by entrenchment. `threads_at_bankfull`, `single_thread` in the layer.
+  **Fan caps**: the radius cap is 8% of the DEM's short side (3 to 12 km)
+  and the auto-raised slope floor stops at 3%. Bajadas still fail the
+  cone test (they are not cones): a piedmont-surface test is next.
 
 **Tonight (21 Oct, 5 pm Arizona):** a scheduled task starts the whole
 project again with v0.38 into `S:\kingman\geolens_v38` (the first run

@@ -617,9 +617,18 @@ more than Rosgen's tolerance; it still gets its nearest letter.
 floodplain — wide flood-prone width, high entrenchment ratio. Check
 `stream_type_banks.gpkg` on the hillshade where a steep reach comes back B or C.
 
-**D is never asserted without a measured width/depth.** Braiding is many
-threads and the network carries one centreline, so D is only offered when
-width/depth was actually measured above 40. `braided_possible` carries it.
+**D is never asserted without a measured width/depth, nor (v0.38) without
+more than one channel.** Braiding is many threads and the network carries
+one centreline, so D is only offered when width/depth was actually
+measured above 40 and the lidar sections hold two or more channels at the
+bankfull stage across the flood-prone width (runs below the stage parted
+by bars above it; `threads_at_bankfull` carries the reach's median,
+`single_thread` says D was excluded by it). Kingman's pilots had 48% of
+their length typed D on width/depth alone: at the regional depth, 0.2 m
+on a 16 m sandy bed, width/depth is 80 whether the bed carries one
+channel or five, and on the sections it was one for 30 of 32 D reaches.
+Those are C or F by their entrenchment. `braided_possible` carries the
+width/depth half of the test.
 
 **The number is a prior, not a pebble count.** With `geology=`, the substrate
 number comes from the surficial map — good enough to separate a bedrock reach
@@ -833,16 +842,17 @@ the stable / unstable form of every HUC12 level B has done is judged again.
   the measured valley floor instead of the HAND area, breaks calibrated
   to the lidar, valley polygons that are the valley bottom and not the
   catchment, and the 2022 landscape type as *the* valley type (above).
-- **Still open, for the next build:** the alluvial fan search was built on
-  a 49 km² DEM. Its 3,000 m radius cap and the slope floor it raises itself
-  (to 4.9% at Kingman) exclude Basin-and-Range bajadas, which are 5 to
-  15 km long at 1 to 4%: 134 fans were accepted and 1,190 candidates
-  rejected, so Type III is under-called there. And braided (D) is the most
-  common stream type on the lidar pilots (48% of their length), typed on
-  width-to-depth alone; D is natural to `U-AL-AD` on the 2022 card (so
-  `landscape_form` says check) and unstable for VIII on the 1996 table (so
-  `form_status` says unstable). Which reading the map should carry is a
-  field call.
+- **v0.38.1, the two that were left open:** the alluvial fan search was
+  built on a 49 km² DEM, and its 3,000 m radius cap and the slope floor it
+  raised itself (to 4.9% at Kingman) excluded Basin-and-Range bajadas, 5
+  to 15 km long at 1 to 4%: 134 fans accepted, 1,190 candidates rejected.
+  The cap now grows with the DEM (8% of its short side, 3 to 12 km) and
+  the raised floor stops at 3%. And braided (D) was 48% of the pilots'
+  stream length on width-to-depth alone; D now needs more than one
+  channel on the lidar sections (above), which 30 of the 32 D reaches of
+  one pilot did not have. Coalesced fans (bajadas) are still not cones,
+  so the cone test will keep rejecting them: a piedmont-surface test is
+  the next step there.
 
 ### Erosion features — gullies
 
