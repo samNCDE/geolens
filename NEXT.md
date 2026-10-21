@@ -5,33 +5,47 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.39.0 beta. The full test suite passes on Linux with numba
+**State.** v0.40.0 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
 The release is unzipped at `S:\geolens\gl33` (the folder name stayed; the
 changed files of each release are committed into it, never while a run
 uses it). The zips and git bundles (`geolens_v0.37.1.bundle`, holding
 v0.30.0 to v0.37.1) are in `S:\geolens\Claude outputs`.
 
-**Pick up here (21 Oct, 2:10 pm Arizona, session limit near).**
+**Pick up here (21 Oct evening Arizona).**
 - `S:\kingman\geolens_v38` is running v0.38.1 (started 1:25 pm, level B
   on every HUC12 with lidar, data steps, lidar calibration; about 8 to 9 am
-  on 22 Oct). Check-ins are scheduled (send_later 3:27 pm, 5 pm, then
-  chained). Do not start another run on that folder; do not change gl33
-  until it ends (a module imported later would be a different version).
-- v0.39.0 (fans from the soils map, below) is built in the dev tree with
-  tests; the full suite was running at the limit. If it passed: release it
-  to `S:\geolens\Claude outputs` (release.sh in the scratchpad; the
-  commit message is ready), not gl33. After the run ends, put v0.39 into
-  gl33 and run the project tool once more on `geolens_v38`: TYPING 3
-  re-types everything in minutes and the summary follows.
-- Then, in Sam's order: stream power per reach and the per-HUC12
-  sensitivity synthesis as a draft for his weights, with a major-streams
-  layer (dissolved by NHD name or branch above a threshold, contributing
-  area at the mouth); the methods write-up v0.28 to v0.39; GitHub cloud
+  on 22 Oct). Check-ins are scheduled into the session every two hours.
+  Do not start another run on that folder; do not change gl33 until it
+  ends (a module imported later would be a different version).
+- v0.39.0 (fans from the soils map) and v0.40.0 (stream power, major
+  streams, the sensitivity table; the network tracer and the drainage
+  per reach fixed, below) are released to `S:\geolens\Claude outputs`,
+  not gl33. After the run ends: put v0.40 into gl33 and run the project
+  tool once more on `geolens_v38`. TYPING 3 re-types everything in
+  minutes, the summary follows, and the new last step (stream power,
+  `major_streams`, `huc12_sensitivity`) runs on the finished layers. The
+  level A pass itself is not redone, so that run keeps the old tracer's
+  gaps (bridged in the synthesis) and the inherited drainage (corrected
+  there); the next whole run gets both right at the source.
+- The draft tables for Sam are in the scratchpad (`synth1/merged`: the
+  major streams, the sensitivity table on the first run's data, without
+  slope, RAP, fire or Atlas 14, which the v0.38.1 run brings). The
+  weights are a proposal for him to change.
+- Then, in Sam's order: the methods write-up v0.28 to v0.40; GitHub cloud
   runs for laptop recon (workflow_dispatch, level A at 20-30 m in the
-  runner's memory, results as an artifact).
+  runner's memory, results as an artifact); NHD names onto the major
+  streams (NHDPlus HR `GNIS_Name`, `TotDASqKm` as the cross-check for
+  rivers entering from outside the HUC8s).
+- **Sam, 21 Oct, 4:10 pm:** if the v0.38.1 run finishes before 8 am
+  Arizona on 22 Oct, put v0.40.0 into gl33 and run the latest version on
+  the whole field office into a new folder (`S:\kingman\geolens_v40`,
+  level B on every HUC12 with lidar, all data steps; no more pilots). If
+  it finishes after 8 am, report and hold; his fallback is Friday 23 Oct,
+  4:30 pm Arizona, to run over the weekend (he will cancel a daytime run
+  that slows his computer). The check-in prompts carry this.
 - A fresh session without this container: unzip
-  `geolens_v0.39.0-beta.zip` from Claude outputs (or clone the bundle) as
+  `geolens_v0.40.0-beta.zip` from Claude outputs (or clone the bundle) as
   the dev tree; `python -m pytest tests/ -q` is the gate.
 
 **Sam's review (21 Oct):** the 1996 types had stayed the valley type; the
@@ -125,6 +139,73 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.40.0 (beta): stream power, major streams, the sensitivity table
+
+Sam's second item for the session ("lets do it in that order"): stream
+power and the per-HUC12 sensitivity synthesis as a draft with the weights
+for him to decide, and "contributing drainage area to each stream, or at
+least major streams". `geolens.synthesis`, the last step of a project
+run (RUNNING.md, "Stream power, major streams and the sensitivity table"):
+
+- `stream_power`: Q from the curve's discharge relation (Moody et al.
+  2003 publish one per province; the generic US curve has none), Ω = ρgQS
+  and ω = Ω / W per reach.
+- `trace_streams`: `stream_id` from every outlet up the larger drainage
+  at each junction, `dist_to_mouth_km`, `flows_into`,
+  `stream_km2_at_mouth`. Written against the first Kingman run's merged
+  reaches, which taught it three things about the network layer:
+  1. **The tracer dropped connecting paths.** `extract_network` dropped
+     every traced path under 300 m as a spur; a short path *between two
+     junctions* is the stream itself, and a wide wash's skeleton (side
+     loops everywhere) is full of them. 1,323 of 39,109 reaches had a gap
+     of up to 400 m below them and the main stems came out in pieces of
+     1-17 reaches. Fixed at the source (a short path between two
+     junctions is joined onto the neighbouring path carrying the most
+     flow, the short side of a loop dropped, and only a path with a free
+     end is a spur; the 8-connected skeleton's staircase triangles made
+     3,620 two-cell stubs on the 30 m fixture alone, which had cut that
+     network at every one and hidden 30% of its length) and bridged in
+     the synthesis for layers already traced:
+     a downstream end with no reach at its node joins the reach whose
+     line passes within two cells, else the nearest within 400 m, in
+     every case one carrying at least 95% of its own drainage.
+  2. **Tributary mouths inherited the river's drainage.** Every path ends
+     on the junction cell; the id raster gave that cell to one of the
+     paths meeting there; when it was the tributary's, `acc_max` took
+     the river's accumulation: 264 mouth reaches carrying 1,000-3,800 km²
+     above a reach of 10 (and a bankfull width from the curve to match,
+     so their confinement ratio was wrong too). `classify_segments` now
+     leaves junction cells (three or more skeleton neighbours) out of
+     the per-segment maximum; the synthesis flags `drainage_inherited`
+     on existing layers and uses the reach above (`drainage_km2_used`)
+     for the stream power and the stream's drainage.
+  3. **Two reaches ending at one confluence with nothing below receive
+     each other** (each lies on the other's line), and a ring does the
+     same; cycles are cut at their biggest reach, which is the outlet.
+     Parallel threads of one wash belong to the river's stream.
+  Before the three: 14,552 streams, the 3,798 km² wash in 9 pieces.
+  After: 5,848 streams, 534 outlets, the three biggest main stems whole
+  (60-111 km). Flow direction is the fall along each branch on the filled
+  DEM; half the reaches are drawn uphill (`flow_reversed`).
+- `major_streams`: one line per stream draining ≥ 25 km² at the mouth
+  (332 on Kingman's first run, 90 over 100 km²), with drainage at the
+  mouth, length, gradient, stream power, dominant landscape type, fan and
+  unconfined shares, the HUC12 at the mouth. No names yet (NHD next).
+- `huc12_sensitivity`: percentile ranks of ten components of the HUC12
+  summary (K, HSG D, slope, alluvial share, unstable form, unit stream
+  power, bare ground and its trend, fire, the 100-year storm), weighted
+  (0.15 / 0.10 / 0.10 / 0.15 / 0.15 / 0.10 / 0.10 / 0.05 / 0.05 / 0.05),
+  cut into thirds, with `sensitivity_drivers` naming the components that
+  put each HUC12 where it is, `weight_measured`, and `insufficient data`
+  under half the weight. Weights from a JSON file re-rank on the next
+  run. On the first run's data (no slope, RAP, fire or Atlas 14 yet):
+  Iron Spring Wash, Upper Sycamore Creek, Crow Canyon, Hibernia Canyon,
+  Rock Creek top the table on K, stream power and alluvial valley.
+- Wired into `run_project` (`major_streams_km2`, `sensitivity_weights`),
+  the CLI (`--major-km2`, `--weights`), the toolbox (two parameters, two
+  outputs, styled), RESULTS.md (a section with the weights, the largest
+  streams and the most sensitive HUC12s). 12 tests on a drawn network.
 
 ## v0.39.0 (beta): fans from the soils map
 

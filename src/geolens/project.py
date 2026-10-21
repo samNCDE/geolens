@@ -982,6 +982,8 @@ def run_project(boundary: str, where: str | None = None,
                 calibrate_confinement: bool = True,
                 keep_lidar_dem: bool | None = None,
                 keep_lidar_tiles: bool = False,
+                major_streams_km2: float = 25.0,
+                sensitivity_weights: dict | str | None = None,
                 timeout: int = 120,
                 guard: Guard | None = None) -> dict[str, Any]:
     """Level A over the whole area, level B by HUC12, merged layers, a
@@ -996,8 +998,12 @@ def run_project(boundary: str, where: str | None = None,
     entrenchment the lidar measured in level B, and re-type the valleys
     with them. ``keep_lidar_dem``: keep each HUC12's 1 m mosaic after its
     channels are measured (default: only when level B is a pilot or a
-    list; "all" drops them, about 300 MB each). Resumes a project folder
-    that already has a ``project.json``."""
+    list; "all" drops them, about 300 MB each). ``major_streams_km2``: the
+    drainage at the mouth a stream needs to be in ``major_streams``.
+    ``sensitivity_weights``: the HUC12 sensitivity table's weights, a dict
+    or a JSON file of summary column -> weight (``synthesis.COMPONENTS``
+    by default). Resumes a project folder that already has a
+    ``project.json``."""
     import geopandas as gpd
 
     pilot_by = (pilot_by or "representative").lower()
@@ -1306,6 +1312,26 @@ def run_project(boundary: str, where: str | None = None,
     except Exception as exc:                                 # noqa: BLE001
         st.warn(f"The HUC12 summary could not be built ({type(exc).__name__}: "
                 f"{str(exc)[:200]}).")
+    # 10. stream power, major streams, the sensitivity table -----------------------------------
+    note("project: stream power, major streams and the sensitivity table")
+    try:
+        from .synthesis import synthesize
+
+        syn = synthesize(root / "merged", valley_types=pa["valley_types"],
+                         curve=curve, merged=merged["valley_types"],
+                         summary_csv=root / "merged" / "huc12_summary.csv",
+                         hucs=inside, min_drainage_km2=major_streams_km2,
+                         weights=sensitivity_weights, cell_m=cell_a)
+        merged["major_streams"] = syn["major_streams"]
+        if syn.get("sensitivity_layer"):
+            merged["huc12_sensitivity"] = syn["sensitivity_layer"]
+        st.data["synthesis"] = {k: v for k, v in syn.items()
+                                if k not in ("reaches",)}
+        st.unwarn("The stream power and sensitivity step failed")
+    except Exception as exc:                                 # noqa: BLE001
+        st.warn(f"The stream power and sensitivity step failed "
+                f"({type(exc).__name__}: {str(exc)[:200]}).")
+    st.save()
     _report(root, st, merged, cell_a, curve, why_curve, want_data)
     return {"project": str(root), "status": str(st.path), **merged,
             "level_b": {h: v.get("status") for h, v in st.data["huc12"].items()},
@@ -1544,12 +1570,88 @@ def _report(root: Path, st: _Status, merged: dict, cell_a: float,
                   "level B ran, and the watershed data above. It is the "
                   "subwatershed table a plan's hydrologic section is written "
                   "from; nothing in it is weighted into a score.", ""]
+    lines += _synthesis_lines(st.data.get("synthesis"))
     lines += ["## Layers", ""]
     lines += [f"- `{k}`: {v}" for k, v in merged.items()]
     if st.data["warnings"]:
         lines += ["", "## Warnings", ""]
         lines += [f"- {w}" for w in st.data["warnings"]]
     (root / "RESULTS.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _synthesis_lines(syn: dict | None) -> list[str]:
+    """RESULTS.md: stream power, the major streams and the sensitivity
+    table -- what was computed, from what, and the first few rows."""
+    if not syn:
+        return []
+    from .synthesis import LABELS
+
+    tr = syn.get("tracing") or {}
+    out = ["## Stream power, major streams and the sensitivity table", "",
+           f"Every reach in `valley_types` now has a bankfull discharge "
+           f"from the regional curve ({syn.get('power_basis', '')}), the "
+           f"total stream power Omega = rho g Q S (`stream_power_w_m`, W/m) and the "
+           f"unit stream power omega = Omega / W over the curve's bankfull width "
+           f"(`unit_stream_power_w_m2`, W/m²). They rank reaches by how "
+           f"much work the channel can do; the slope is the 10 m reach "
+           f"gradient and the discharge a curve, so compare, do not design.",
+           "",
+           f"Each reach also has a `stream_id`: from each of the "
+           f"{tr.get('outlets', 0):,} outlets the main stem was followed "
+           f"upstream, taking the larger drainage at every junction, and "
+           f"each tributary numbered in turn ({tr.get('streams', 0):,} "
+           f"streams; `dist_to_mouth_km`, `flows_into`, "
+           f"`stream_km2_at_mouth`). "
+           f"{tr.get('bridged', 0):,} reaches were joined across a gap in "
+           f"the traced network and {tr.get('inherited_drainage', 0):,} "
+           f"tributary mouths had inherited the river's drainage at the "
+           f"junction cell (`drainage_inherited`; `drainage_km2_used` is "
+           f"the corrected figure)."]
+    n = syn.get("major_streams_n", 0)
+    out += ["",
+            f"`major_streams` has the {n:,} streams draining at least "
+            f"{syn.get('min_drainage_km2', 25):g} km² at the mouth, one line "
+            f"each, with the drainage at the mouth, length, gradient, stream "
+            f"power, dominant landscape type and the shares on fans and "
+            f"unconfined. Names are not attached yet (NHD names are next)."]
+    if syn.get("largest"):
+        out += ["", "| Stream | Drainage at mouth, km² | Length, km | Main "
+                "landscape type | HUC12 at mouth |", "|---|---|---|---|---|"]
+        for r in syn["largest"]:
+            out.append(f"| {r['stream_id']} | {r['drainage_km2']:,.0f} | "
+                       f"{r['length_km']:,.1f} | {r.get('landscape_main') or ''} "
+                       f"| {r.get('huc12_mouth') or ''} |")
+    sens = syn.get("sensitivity")
+    if sens and sens.get("skipped"):
+        out += ["", f"The HUC12 sensitivity table was not built: "
+                f"{sens['skipped']}"]
+    elif sens:
+        out += ["",
+                "`huc12_sensitivity` ranks the HUC12s inside the boundary. "
+                "Each component below is a percentile rank among them (1 = "
+                "the most of it), the score is the weighted mean of the ranks "
+                "a HUC12 has, and the class cuts the scored HUC12s into "
+                "thirds. The weights are a first proposal, in "
+                "`merged/sensitivity_weights.json`: change them and run the "
+                "project again to re-rank. `sensitivity_drivers` says which "
+                "components put each HUC12 where it is.", "",
+                "| Component | Column | Weight |", "|---|---|---|"]
+        for col, w in sens.get("weights", {}).items():
+            out.append(f"| {LABELS.get(col, col)} | `{col}` | {w:.2f} |")
+        if sens.get("dropped"):
+            out += ["", "Not used this run: " + "; ".join(
+                f"{LABELS.get(k, k)} ({v})" for k, v in sens["dropped"].items())
+                + "."]
+        c = sens.get("classes", {})
+        out += ["", f"Classes: high {c.get('high', 0)}, moderate "
+                f"{c.get('moderate', 0)}, low {c.get('low', 0)}, "
+                f"insufficient data {c.get('insufficient data', 0)}."]
+        if syn.get("most_sensitive"):
+            out += ["", "| HUC12 | Name | Score | Drivers |", "|---|---|---|---|"]
+            for r in syn["most_sensitive"]:
+                out.append(f"| {r['huc12']} | {r.get('name') or ''} | "
+                           f"{r['score']:.2f} | {r.get('drivers') or ''} |")
+    return out + [""]
 
 
 def _pilot_lines(plan: dict) -> list[str]:

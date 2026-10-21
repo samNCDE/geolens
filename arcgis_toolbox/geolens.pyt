@@ -934,7 +934,11 @@ class RunProject(_Tool):
         "package (fire history, SSURGO ecological sites, PRISM climate, "
         "NOAA Atlas 14 storm depths, RAP vegetation cover and trends) is "
         "fetched per HUC12, and meets the valley types, soils, slope and "
-        "stream form in one HUC12 summary table. "
+        "stream form in one HUC12 summary table. Every reach then gets its "
+        "stream power and the stream it is on; the major streams are one "
+        "line each with the drainage at the mouth; and a sensitivity table "
+        "ranks the HUC12s by weighted percentile ranks of what the summary "
+        "measured (the weights are written beside it to be argued with). "
         "Merged layers, a HUC12 status layer and RESULTS.md (what ran at "
         "what resolution, and every warning) go in the project folder. "
         "Run it again on the same folder to carry on where it stopped.")
@@ -989,6 +993,11 @@ class RunProject(_Tool):
             P("Keep each HUC12's 1 m DEM after its channels are measured "
               "(about 300 MB each)", "keep_dem", "GPBoolean", default=False,
               category=OPT),
+            P("Major streams: drainage at the mouth, km2", "major_km2",
+              "GPDouble", default=25.0, category=OPT),
+            P("Sensitivity weights file (JSON: summary column -> weight; "
+              "blank = the built-in set)", "weights", "DEFile",
+              required=False, category=OPT),
             D("Valley types", "out_valley_types"),
             D("Stream types", "out_stream_types"),
             D("Stream-type sections", "out_sections"),
@@ -998,6 +1007,8 @@ class RunProject(_Tool):
             D("Soils (SSURGO)", "out_soils"),
             D("Soils with ecological sites", "out_ecosites"),
             D("Fire perimeters", "out_fire"),
+            D("Major streams", "out_major"),
+            D("HUC12 sensitivity", "out_sensitivity"),
         ]
 
     def updateMessages(self, parameters):
@@ -1034,6 +1045,8 @@ class RunProject(_Tool):
             "data": ga.choice(v["data"], self.DATA),
             "calibrate_confinement": bool(v["calibrate"].value),
             "keep_lidar_dem": True if v["keep_dem"].value else None,
+            "major_streams_km2": v["major_km2"].value or 25.0,
+            "sensitivity_weights": ga.text(v["weights"]) or None,
         }, out, "project")
         arcpy.AddMessage("level B: %s" % res.get("level_b"))
         arcpy.AddMessage("results: %s" % os.path.join(out, "RESULTS.md"))
@@ -1045,7 +1058,9 @@ class RunProject(_Tool):
                           ("out_summary", "huc12_summary"),
                           ("out_soils", "soils"),
                           ("out_ecosites", "soils_ecosites"),
-                          ("out_fire", "fire_perimeters")):
+                          ("out_fire", "fire_perimeters"),
+                          ("out_major", "major_streams"),
+                          ("out_sensitivity", "huc12_sensitivity")):
             ga.set_output(v, name, res.get(key))
 
 

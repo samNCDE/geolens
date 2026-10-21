@@ -204,7 +204,7 @@ ArcGIS.</p>
     Add Toolbox</em> and choose <code>arcgis_toolbox\geolens.pyt</code> in the geolens
     folder.</li>
 <li><strong>Check it:</strong> run <em>0 Setup ▸ Find the geolens environment</em>. It should
-    report "geolens 0.39.0 found". If it can't find the environment, give it
+    report "geolens 0.40.0 found". If it can't find the environment, give it
     the environment's <code>python.exe</code>, which the installer prints. The tool
     remembers it.
     <em>0 Setup ▸ Check internet services</em> says which download services this
@@ -220,8 +220,11 @@ ArcGIS.</p>
     most unconfined valley. It also fetches, per HUC12, fire history,
     ecological sites, PRISM climate, Atlas 14 storm depths and RAP
     vegetation cover, and writes one summary row per HUC12 (<code>huc12_summary</code>).
-    <code>RESULTS.md</code> in the folder says what ran at what resolution. Run it again
-    to carry on.</p>
+    At the end every reach gets its stream power and the stream it is on,
+    the major streams come out one line each with the drainage at the
+    mouth (<code>major_streams</code>), and <code>huc12_sensitivity</code> ranks the HUC12s, with
+    the weights written beside it for you to change. <code>RESULTS.md</code> in the
+    folder says what ran at what resolution. Run it again to carry on.</p>
 <p><strong>Or run the whole routine</strong> on one DEM (<em>1 Whole routine</em>), or <strong>one step
 at a time</strong> (<em>2 Steps</em>):</p>
 <table>
@@ -426,7 +429,7 @@ runs/                 what was run, with which settings, how long it took
 <li><a href="OVERVIEW.md">OVERVIEW.md</a>: what each step does and what to trust, in more
   depth.</li>
 <li><a href="RUNNING.md">RUNNING.md</a>: every step and parameter, with tuning tables.</li>
-<li><code>docs/geolens_technical_summary_v0.28.pdf</code>: the methods and references,
+<li><code>docs/geolens_technical_summary_v0.40.pdf</code>: the methods and references,
   including the bankfull method and the stable/unstable table.</li>
 <li><a href="NEXT.md">NEXT.md</a>: the working log — what changed in each version and what
   is known to be weak.</li>

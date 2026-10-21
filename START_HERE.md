@@ -129,7 +129,7 @@ ArcGIS.
    Add Toolbox* and choose `arcgis_toolbox\geolens.pyt` in the geolens
    folder.
 2. **Check it:** run *0 Setup ▸ Find the geolens environment*. It should
-   report "geolens 0.39.0 found". If it can't find the environment, give it
+   report "geolens 0.40.0 found". If it can't find the environment, give it
    the environment's `python.exe`, which the installer prints. The tool
    remembers it.
    *0 Setup ▸ Check internet services* says which download services this
@@ -144,8 +144,11 @@ ArcGIS.
    most unconfined valley. It also fetches, per HUC12, fire history,
    ecological sites, PRISM climate, Atlas 14 storm depths and RAP
    vegetation cover, and writes one summary row per HUC12 (`huc12_summary`).
-   `RESULTS.md` in the folder says what ran at what resolution. Run it again
-   to carry on.
+   At the end every reach gets its stream power and the stream it is on,
+   the major streams come out one line each with the drainage at the
+   mouth (`major_streams`), and `huc12_sensitivity` ranks the HUC12s, with
+   the weights written beside it for you to change. `RESULTS.md` in the
+   folder says what ran at what resolution. Run it again to carry on.
 
    **Or run the whole routine** on one DEM (*1 Whole routine*), or **one step
    at a time** (*2 Steps*):
@@ -332,7 +335,7 @@ runs/                 what was run, with which settings, how long it took
 - [OVERVIEW.md](OVERVIEW.md): what each step does and what to trust, in more
   depth.
 - [RUNNING.md](RUNNING.md): every step and parameter, with tuning tables.
-- `docs/geolens_technical_summary_v0.28.pdf`: the methods and references,
+- `docs/geolens_technical_summary_v0.40.pdf`: the methods and references,
   including the bankfull method and the stable/unstable table.
 - [NEXT.md](NEXT.md): the working log — what changed in each version and what
   is known to be weak.

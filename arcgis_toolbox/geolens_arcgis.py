@@ -500,6 +500,14 @@ STYLES = {
     "headcuts": {"name": "Headcuts", "single": "#d7301f", "width": 6.0},
     "soils": {"name": "Soils (SSURGO)", "field": "material_class",
               "colours": _MATERIAL, "alpha": 45},
+    "major_streams": {"name": "Major streams", "single": "#08519c",
+                      "width": 3.0},
+    "huc12_sensitivity": {"name": "HUC12 sensitivity",
+                          "field": "sensitivity_class",
+                          "colours": {"high": "#b2182b", "moderate": "#f4a582",
+                                      "low": "#4393c3",
+                                      "insufficient data": _GREY},
+                          "alpha": 45},
 }
 
 

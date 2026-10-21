@@ -6,7 +6,7 @@ types, and judges whether each reach's stream type is a **stable or unstable
 form for its valley**. Every channel section it measures comes with a plot you
 can click on the map.
 
-*Beta (v0.39). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
+*Beta (v0.40). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
 or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 
 ---
@@ -21,6 +21,7 @@ or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 | 4. Stream types | Five channel sections per reach on the lidar: bankfull at the regional curve's depth (Moody et al. 2003 for AZ/NM), width/depth, entrenchment, slope and sinuosity give a **Rosgen stream type A–G**, with a plot of every section. |
 | 5. Stable or unstable form | Each reach's stream type against its valley type (NRCS NEH 654 TS3E, after Rosgen 1996): **stable**, **unstable**, **check** or **unknown**. |
 | Projects of any size | Give a boundary (a BLM field office, a ranch): the whole area at 10 m for valleys and valley types, widened to the HUC12 watersheds draining into it, then HUC12 by HUC12 on 1 m lidar for stream types and stable/unstable form. Resumable; every layer says what resolution it was measured at. |
+| Stream power, major streams, sensitivity | Every reach gets its bankfull discharge and stream power from the regional curve and the stream it is on; the major streams are one line each with the drainage at the mouth; and a table ranks the HUC12s by weighted percentile ranks of what was measured, with the weights written beside it to be argued with. |
 | More | Gullies and headcuts, riparian band from NAIP NDVI, cross-sections along any centerline, watershed clipping, fetching 3DEP DEMs, NAIP imagery and SSURGO soils (finer than the geologic map for valley floors), and Sentinel-1 radar statistics (to tell riparian woodland from irrigated fields). |
 
 ## How much to trust it
@@ -34,7 +35,8 @@ or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 | Gullies, headcuts | **Experimental.** |
 | Sentinel-1 radar statistics | **New; tested offline only.** For an experiment, not yet a classification. |
 | SSURGO soils as geology | **New; tested offline only.** Compare its valley types with the USGS geology's before relying on it. |
-| Project runs (by HUC12) | **New; tested offline only.** The first real run is the Kingman Field Office. |
+| Project runs (by HUC12) | **Run twice on the Kingman Field Office** (41,000 km², 446 HUC12s); the second run on every HUC12 with lidar. |
+| Stream power, major streams, sensitivity table | **New; checked on the first Kingman run's reaches.** Stream power is an index from a curve and a 10 m slope, for comparing reaches. The sensitivity weights are a first proposal. |
 
 The reasons, with the numbers behind them, are in [START_HERE.md](START_HERE.md).
 
@@ -136,7 +138,7 @@ See [RUNNING.md](RUNNING.md).
 | [START_HERE.md](START_HERE.md) (`.html`) | Colleagues: what it does, install, run, read the results, what to trust. |
 | [RUNNING.md](RUNNING.md) | Every step and parameter, the toolbox internals, tuning tables. |
 | [OVERVIEW.md](OVERVIEW.md) | How each step works and why. |
-| `docs/geolens_technical_summary_v0.28.pdf` | Methods and references. |
+| `docs/geolens_technical_summary_v0.40.pdf` | Methods and references. |
 | [docs/ARCGIS_TEST_CHECKLIST.md](docs/ARCGIS_TEST_CHECKLIST.md) | A 30-minute first run of every toolbox tool, and what to report. |
 | [NEXT.md](NEXT.md) | Working log: what changed in each version, known weaknesses, what is next. |
 | [docs/SAR_FEASIBILITY.md](docs/SAR_FEASIBILITY.md) | Whether Sentinel-1 radar separates riparian woodland from irrigated fields, and the experiment that decides it. |

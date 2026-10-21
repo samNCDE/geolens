@@ -1,7 +1,7 @@
 # geolens — what it is, how to use it, where it goes next
 
 A formatted summary with method descriptions, figures and references is in
-[docs/geolens_technical_summary_v0.28.pdf](docs/geolens_technical_summary_v0.28.pdf).
+[docs/geolens_technical_summary_v0.40.pdf](docs/geolens_technical_summary_v0.40.pdf).
 
 A Python package for extracting channel and valley geometry from a DEM. Open
 source throughout — GDAL, rasterio, geopandas, shapely — so no ArcGIS licence is

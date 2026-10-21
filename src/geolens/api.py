@@ -1608,6 +1608,8 @@ def run_project(
     data: str | list | None = "all",
     calibrate_confinement: bool = True,
     keep_lidar_dem: bool | None = None,
+    major_streams_km2: float = 25.0,
+    sensitivity_weights: dict | str | None = None,
 ) -> dict[str, Any]:
     """A whole project area, any size: valleys everywhere, channels on lidar.
 
@@ -1642,7 +1644,14 @@ def run_project(
     each HUC12's 1 m mosaic after its channels are measured (default: only
     for a pilot or a list; ``level_b="all"`` drops them, about 300 MB each).
     The valley type is Rosgen's 2022 fluvial landscape type, with the 1996
-    type beside it as ``valley_type_1996``.
+    type beside it as ``valley_type_1996``. At the end every reach gets its
+    stream power and a ``stream_id`` (the main stem of each stream, traced
+    from the outlet up the larger drainage at every junction), the streams
+    draining at least ``major_streams_km2`` at the mouth are dissolved into
+    ``major_streams``, and ``huc12_sensitivity`` ranks the HUC12s by the
+    weighted percentile ranks of what the summary measured
+    (``sensitivity_weights``: a dict or JSON file of summary column ->
+    weight; ``geolens.synthesis.COMPONENTS`` by default).
     """
     from .project import run_project as _rp
 
@@ -1654,7 +1663,9 @@ def run_project(
                section_plots=section_plots, level_b_hours=level_b_hours,
                soils=soils, data=data,
                calibrate_confinement=calibrate_confinement,
-               keep_lidar_dem=keep_lidar_dem)
+               keep_lidar_dem=keep_lidar_dem,
+               major_streams_km2=major_streams_km2,
+               sensitivity_weights=sensitivity_weights)
 
 
 def check_services(timeout: int = 20) -> dict[str, Any]:

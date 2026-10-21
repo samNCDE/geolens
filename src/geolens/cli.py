@@ -331,6 +331,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--keep-lidar-dem", action="store_true",
                    help="keep every HUC12's 1 m mosaic (about 300 MB each) "
                         "after its channels are measured")
+    s.add_argument("--major-km2", type=float, default=25.0,
+                   help="drainage at the mouth a stream needs to be in "
+                        "major_streams (default 25)")
+    s.add_argument("--weights", default=None,
+                   help="JSON file of HUC12 summary column -> weight for "
+                        "the sensitivity table (default: the built-in set; "
+                        "merged/sensitivity_weights.json shows it)")
 
     sub.add_parser("backends", help="show which flow-routing backends are installed")
     s = sub.add_parser("history", help="what has been run in this output directory")
@@ -622,10 +629,14 @@ def main(argv: list[str] | None = None) -> int:
                 level_b_hours=args.hours, soils=not args.no_soils,
                 data=args.data,
                 calibrate_confinement=not args.no_calibration,
-                keep_lidar_dem=True if args.keep_lidar_dem else None)
+                keep_lidar_dem=True if args.keep_lidar_dem else None,
+                major_streams_km2=args.major_km2,
+                sensitivity_weights=args.weights)
             _print({"project": r.get("project"),
                     "results": str(out / "RESULTS.md"),
                     "huc12_summary": r.get("huc12_summary"),
+                    "major_streams": r.get("major_streams"),
+                    "huc12_sensitivity": r.get("huc12_sensitivity"),
                     "level_b": r.get("level_b"),
                     "warnings": r.get("warnings"),
                     "seconds": r.get("seconds")})

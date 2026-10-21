@@ -194,11 +194,28 @@ def classify_segments(
     v_counts = np.bincount(alloc[vb].ravel(), minlength=n_seg + 1)
     c_counts = np.bincount(alloc[core].ravel(), minlength=n_seg + 1)
 
-    # Drainage area over each segment's own stream cells.
+    # Drainage area over each segment's own stream cells -- its own, not the
+    # junction cell it shares with the river it joins. Every traced path
+    # ends on the junction cell, the id raster gives that cell to one of
+    # the paths meeting there, and when it was the tributary's its drainage
+    # became the river's: 74 tributary mouths on the first Kingman run
+    # carried 1,000-3,000 km² above a reach of 10, with a bankfull width
+    # from the curve to match. A junction cell has three or more skeleton
+    # neighbours; it counts for no segment unless a segment has nothing
+    # else.
     seg_flat = seg_ids.ravel()
     on_stream = seg_flat > 0
+    nb = ndimage.convolve(has_id.astype(np.uint8), np.ones((3, 3), np.uint8),
+                          mode="constant") - has_id.astype(np.uint8)
+    own = on_stream & ~(has_id & (nb >= 3)).ravel()
+    del nb
+    acc_flat = acc.ravel()
     acc_max = np.zeros(n_seg + 1)
-    np.maximum.at(acc_max, seg_flat[on_stream], acc.ravel()[on_stream])
+    np.maximum.at(acc_max, seg_flat[own], acc_flat[own])
+    acc_any = np.zeros(n_seg + 1)
+    np.maximum.at(acc_any, seg_flat[on_stream], acc_flat[on_stream])
+    acc_max = np.where(acc_max > 0, acc_max, acc_any)
+    del acc_any, own
 
     # Mean HAND over each segment's VALLEY cells, not its stream cells.
     #

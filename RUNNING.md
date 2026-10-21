@@ -1308,11 +1308,93 @@ the boundary, puts them beside what the project measured:
 - the data steps' columns (`fire_*`, `ecosite_*`, `prism_*`, `atlas14_*`,
   `rap_*_recent`, `rap_*_per_decade`).
 
-Nothing is weighted into a score. Which of these make a HUC12 sensitive
-(bare ground rising on erodible D soils below a burn, say) is the
-analyst's call, and the table is built to make it: sort it, map it from
-the geopackage, or join it to treatment areas. `RESULTS.md` lists what
-each step fetched.
+Nothing in the summary itself is weighted into a score. Which of these
+make a HUC12 sensitive (bare ground rising on erodible D soils below a
+burn, say) is the analyst's call, and the table is built to make it: sort
+it, map it from the geopackage, or join it to treatment areas. The
+sensitivity table below is one proposal for that call, with its weights
+in the open. `RESULTS.md` lists what each step fetched.
+
+### Stream power, major streams and the sensitivity table (v0.40)
+
+Three things a plan asks of the reach layer once it exists
+(`geolens.synthesis`; the last step of a project run, so running a
+finished project again redoes them in a minute or two).
+
+**Stream power.** Every reach in `valley_types` gets a bankfull discharge
+from the regional curve (`q_bankfull_m3s`; Moody et al. 2003 publish Q =
+a·A^b for each province, A the drainage area in km²), the total stream
+power Ω = ρgQS (`stream_power_w_m`, W/m; S the 10 m reach gradient) and
+the unit stream power ω = Ω / W over the curve's bankfull width
+(`unit_stream_power_w_m2`, W/m²). Both are indices from a curve and a
+coarse slope: use them to compare reaches (the literature's thresholds,
+such as Brookes's 35 W/m² above which channelized rivers adjusted back,
+are a guide to reading them), not to design. The generic US curve has no discharge relation, so
+outside the arid Southwest they stay empty and `power_basis` says so.
+
+**Which stream a reach is on.** `drainage_km2` is the area draining to a
+reach's downstream end; the contributing area of a *stream* is that at
+its mouth. From every outlet the main stem is followed upstream, taking
+the larger drainage at each junction, and each tributary numbered in
+turn: `stream_id` (1 is the biggest outlet's stream), `dist_to_mouth_km`
+along the stream to the reach's downstream end, `flows_into` (the
+receiving stream) and `stream_km2_at_mouth`. Half the reaches are drawn
+uphill (`flow_reversed`); the flow direction comes from the fall along
+each branch on the filled DEM. The traced network has gaps (before v0.40
+the tracer dropped short connecting paths as if they were spurs; a wide
+wash's skeleton grows side loops that leave many), so a reach whose
+downstream end meets no reach at a node joins the reach whose line passes
+within two cells, else the nearest reach within 400 m that carries at
+least 95% of its drainage. A tributary's mouth reach shares the junction
+cell with the river, and before v0.40 the id raster could give it the
+river's accumulation: a mouth carrying the river's drainage is flagged
+`drainage_inherited` and `drainage_km2_used` takes the reach above (the
+stream power uses the corrected figure; the measured column is kept).
+Parallel threads of one wash (`parallel_thread`) belong to the river's
+stream. On the first Kingman run: 39,109 reaches, 534 outlets, 1,323
+gaps bridged, 264 inherited mouths, and the three biggest main stems
+(2,600–3,800 km² at the mouth) come out whole, 60–111 km each.
+
+**Major streams.** `merged/major_streams.gpkg`: one line per stream
+draining at least `major_streams_km2` (default 25; toolbox *Major
+streams: drainage at the mouth*; shell `--major-km2`) at the mouth, with
+the drainage at the mouth, length, reach count, length-weighted gradient,
+mean and maximum stream power, the dominant landscape type and its share,
+the shares on fans and unconfined, the HUC12 at the mouth and the stream
+it flows into. `name` is empty until the NHD names are joined (next).
+Symbolise by `drainage_km2` for the washes that matter.
+
+**The HUC12 sensitivity table.** `merged/huc12_sensitivity.gpkg` (and
+`.csv`) ranks the HUC12s inside the boundary. Each component is a
+percentile rank among them (1 = the most), the score is the weighted
+mean of the ranks a HUC12 has, and the class cuts the scored HUC12s into
+thirds (`high`, `moderate`, `low`; `insufficient data` when under half
+the weight is measured, as for stream form in a HUC12 level B has not
+run). `sensitivity_drivers` names the components (rank ≥ 0.67) that put
+a HUC12 where it is, so a high is never a mystery. The default weights
+(`geolens.synthesis.COMPONENTS`):
+
+| Component | Summary column | Weight |
+|---|---|---|
+| soil erodibility (K) | `soil_k_mean` | 0.15 |
+| runoff-prone soils (hydrologic group D) | `hsg_D_share` | 0.10 |
+| mean slope | `slope_mean_pct` | 0.10 |
+| stream length in alluvial landscape types | `alluvial_landscape_share` | 0.15 |
+| unstable stream form (level B) | `form_unstable_share` | 0.15 |
+| unit stream power (length-weighted, per HUC12) | `unit_power_mean_w_m2` | 0.10 |
+| bare ground trend (% per decade, RAP) | `rap_bgr_per_decade` | 0.10 |
+| bare ground now (%, RAP) | `rap_bgr_recent` | 0.05 |
+| burned in the last 10 years | `fire_burned_share_10yr` | 0.05 |
+| 100-year 24-hour storm depth | `atlas14_24h_100yr_mm` | 0.05 |
+
+A component the summary lacks or that is the same everywhere drops out
+and the rest are renormalised; `RESULTS.md` says which. They are a first
+proposal, not a finding: `merged/sensitivity_weights.json` has the set
+used, and any JSON of summary column → weight (any numeric column of the
+summary, not only these) given as `sensitivity_weights=` (toolbox
+*Sensitivity weights file*; shell `--weights`) re-ranks on the next run
+without re-running anything else. The ranks are relative to this
+project's HUC12s, so a score is not comparable between field offices.
 
 ### Portable: everything on one drive (v0.33)
 

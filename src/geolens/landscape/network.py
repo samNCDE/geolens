@@ -340,6 +340,99 @@ def _trace_skeleton(skel: np.ndarray) -> list[list[tuple[int, int]]]:
     return paths
 
 
+def _absorb_short_connectors(paths, min_px: int, accumulation: str | None,
+                             shape) -> tuple[list, int]:
+    """Join every path shorter than ``min_px`` that runs between two
+    junctions onto the neighbouring path that carries the most flow at the
+    junction they share, until none is left; the short side of a loop is
+    dropped instead. Returns the paths, how many were joined and how many
+    sides dropped."""
+    import rasterio
+
+    node_paths: dict[tuple[int, int], set[int]] = {}
+    alive = [True] * len(paths)
+
+    def _add(i):
+        for q in (paths[i][0], paths[i][-1]):
+            node_paths.setdefault(q, set()).add(i)
+
+    def _drop(i, ends_):
+        for q in ends_:
+            s = node_paths.get(q)
+            if s:
+                s.discard(i)
+
+    for i in range(len(paths)):
+        _add(i)
+
+    acc_cache: dict[tuple[int, int], float] = {}
+
+    def _flow(cells):
+        """Accumulation at the cells next to the shared node, read once."""
+        want = [c for c in cells if c not in acc_cache]
+        if want and accumulation:
+            try:
+                with rasterio.open(accumulation) as src:
+                    xy = [src.xy(r, c) for r, c in want]
+                    for cell_, v in zip(want, src.sample(xy)):
+                        acc_cache[cell_] = float(v[0])
+            except Exception:                                # noqa: BLE001
+                for cell_ in want:
+                    acc_cache[cell_] = 0.0
+        for cell_ in want:
+            acc_cache.setdefault(cell_, 0.0)
+        return [acc_cache[c] for c in cells]
+
+    joined = dropped_sides = 0
+    for _round in range(50):
+        progress_made = False
+        order = sorted((i for i in range(len(paths)) if alive[i]
+                        and len(paths[i]) < min_px), key=lambda i: len(paths[i]))
+        for i in order:
+            if not alive[i] or len(paths[i]) >= min_px:
+                continue
+            p = paths[i]
+            a, b = p[0], p[-1]
+            at_a = [j for j in node_paths.get(a, ()) if j != i and alive[j]]
+            at_b = [j for j in node_paths.get(b, ()) if j != i and alive[j]]
+            if not at_a or not at_b:
+                continue                         # a free end: a spur, left alone
+            # The short side of a loop (another path between the same two
+            # junctions) is the skeleton of a wide reach drawn twice: drop
+            # it, the other side keeps the stream whole.
+            if any(j in at_b and len(paths[j]) >= len(p) for j in at_a):
+                _drop(i, (a, b))
+                alive[i] = False
+                dropped_sides += 1
+                progress_made = True
+                continue
+            cands = []
+            for node, js in ((a, at_a), (b, at_b)):
+                for j in js:
+                    q = paths[j]
+                    # the cell of q beside the shared node
+                    beside = q[1] if q[0] == node and len(q) > 1 else q[-2]
+                    cands.append((node, j, beside))
+            flows = _flow([c[2] for c in cands])
+            node, j, _ = max(zip(cands, flows),
+                             key=lambda t: (t[1], len(paths[t[0][1]])))[0]
+            q = paths[j]
+            if q[-1] == node:
+                r = q + (p[1:] if p[0] == node else p[-2::-1])
+            else:
+                r = (p[:-1] if p[-1] == node else p[::-1][:-1]) + q
+            _drop(i, (a, b))
+            _drop(j, (q[0], q[-1]))
+            alive[i] = False
+            paths[j] = r
+            _add(j)
+            joined += 1
+            progress_made = True
+        if not progress_made:
+            break
+    return [p for i, p in enumerate(paths) if alive[i]], joined, dropped_sides
+
+
 def extract_network(
     terrain: TerrainResult,
     segment_length_m: float = 500.0,
@@ -415,8 +508,32 @@ def extract_network(
         )
 
     min_px = max(2, int(round(_u_from_m(min_branch_m) / cell)))
-    paths = [p for p in paths if len(p) >= min_px]
-    note(f"{len(paths):,} branches after dropping spurs under {min_branch_m:g} m")
+    # Only a spur -- a path with a free end -- is dropped for being short. A
+    # short path between two junctions is a piece of the stream itself (the
+    # stubs of a junction cluster, and in a wide wash the stretches between
+    # the side loops the skeleton grows), and dropping it cut the main stem
+    # into pieces the network could not join: on the first Kingman run
+    # 1,300 of 39,000 reaches had a gap of up to 400 m below them. Such a
+    # path is joined onto the neighbouring path carrying the most flow (the
+    # river goes on through the junction), never made a reach of its own:
+    # a two-cell stub owns no cell once the junction cells go to the paths
+    # that share them.
+    n0 = len(paths)
+    paths, joined, sides = _absorb_short_connectors(
+        paths, min_px, terrain.accumulation, skel.shape)
+    ends: dict[tuple[int, int], int] = {}
+    for p in paths:
+        for q in (p[0], p[-1]):
+            ends[q] = ends.get(q, 0) + 1
+
+    def _spur(p):
+        return ends.get(p[0], 0) < 2 or ends.get(p[-1], 0) < 2
+    n1 = len(paths)
+    paths = [p for p in paths if len(p) >= min_px or not _spur(p)]
+    note(f"{len(paths):,} branches after joining {joined:,} short connecting "
+         f"paths onto their neighbours, dropping {sides:,} short sides of "
+         f"loops and {n1 - len(paths):,} spurs under {min_branch_m:g} m "
+         f"(traced {n0:,})")
 
     from rasterio.transform import xy as _rc_to_xy
 
