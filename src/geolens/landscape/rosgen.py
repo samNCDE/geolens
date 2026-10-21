@@ -70,6 +70,7 @@ valleys you have typed in the field.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -607,9 +608,48 @@ def classify_valley_type(
 # -- attaching geology to segments -------------------------------------------
 
 
+# What the soils map calls the ground: NRCS landform words that name a fan
+# surface. "Fan terraces", "fan remnants" and "fan piedmonts" are relict
+# surfaces the washes have cut into (Rosgen 2022: inactive fans, U-AL-IF);
+# "alluvial fans", "fan aprons", "fan skirts" and "inset fans" are being
+# built (active, U-AL-AF). Kingman's soils map (Oct 2026) puts 7,800 km2
+# of the field office, a fifth of it, on fan surfaces; the DEM's cone test
+# found 134 fans there, because coalesced fans are not cones.
+FAN_LANDFORMS_ACTIVE = ("alluvial fan", "fan apron", "fan skirt", "inset fan",
+                        "alluvial cone", "debris cone", "debris fan",
+                        "fan collar", "fans")
+FAN_LANDFORMS_INACTIVE = ("fan terrace", "fan remnant", "fan piedmont",
+                          "bajada", "ballena", "relict fan", "erosional fan",
+                          "fan-terrace", "piedmont slope")
+
+
+def fan_from_landform(landform) -> str | None:
+    """``"active"``, ``"inactive"`` or None from a SSURGO landform string
+    (the dominant landform of the map unit's component)."""
+    text = str(landform or "").strip().lower()
+    if not text or text in ("nan", "none"):
+        return None
+    words = [w.strip() for w in re.split(r"[;,/]", text) if w.strip()]
+    for w in words:
+        if any(k in w for k in FAN_LANDFORMS_INACTIVE):
+            return "inactive"
+    for w in words:
+        if any(k in w for k in FAN_LANDFORMS_ACTIVE) or w == "fan":
+            return "active"
+    return None
+
+
 def attach_material(segments, geology, buffer_m: float = 200.0,
                     min_cover: float = 0.25):
-    """Area-weighted dominant material class within a buffer of each segment.
+    """``(materials, covers)``: see :func:`attach_material_landform`."""
+    m, c, _ = attach_material_landform(segments, geology, buffer_m, min_cover)
+    return m, c
+
+
+def attach_material_landform(segments, geology, buffer_m: float = 200.0,
+                             min_cover: float = 0.25):
+    """Area-weighted dominant material class within a buffer of each segment,
+    and, when the layer has one (SSURGO), the dominant ``landform``.
 
     Buffered rather than sampled at a point because a segment is a line and the
     valley it describes has width; a point sample lands wherever the centreline
@@ -620,6 +660,9 @@ def attach_material(segments, geology, buffer_m: float = 200.0,
     is a real answer: the map did not resolve this valley. Silently returning
     whichever sliver was largest is how a 1:500,000 map ends up looking like it
     typed a 60 m valley.
+
+    Returns ``(materials, covers, landforms)``; ``landforms`` is all None
+    without a landform column.
     """
     import geopandas as gpd
     import pandas as pd
@@ -631,7 +674,10 @@ def attach_material(segments, geology, buffer_m: float = 200.0,
         )
 
     geo = geology.to_crs(segments.crs) if geology.crs != segments.crs else geology
-    geo = geo[geo["material_class"].notna()]
+    geo = geo[geo["material_class"].notna() | geo.get(
+        "landform", pd.Series(False, index=geo.index)).notna()]
+    geo = geo.reset_index(drop=True)
+    has_lf = "landform" in geo.columns
 
     # buffer() works in the layer's own units. On EPSG:6529 a 200 m buffer was
     # 200 ft = 61 m, so the geology was sampled from a third of the ground it
@@ -643,34 +689,58 @@ def attach_material(segments, geology, buffer_m: float = 200.0,
         _mpu = 1.0
     buffer_m = float(buffer_m) / max(_mpu, 1e-12)
 
+    # One spatial index, not a full scan per segment: 86,783 reaches against
+    # 7,380 soil polygons took a quarter of an hour the other way.
+    sindex = geo.sindex
+    geoms = geo.geometry.values
+    mats = geo["material_class"].values
+    lfs = geo["landform"].values if has_lf else None
+
     materials: list[str | None] = []
     covers: list[float] = []
+    landforms: list[str | None] = []
     for geom in progress(list(segments.geometry), label="material per segment"):
         if geom is None or geom.is_empty:
             materials.append(None)
             covers.append(0.0)
+            landforms.append(None)
             continue
         buf = geom.buffer(buffer_m)
-        hit = geo[geo.intersects(buf)]
-        if hit.empty:
+        idx = sindex.query(buf, predicate="intersects")
+        if len(idx) == 0:
             materials.append(None)
             covers.append(0.0)
+            landforms.append(None)
             continue
         areas: dict[str, float] = {}
-        for _, row in hit.iterrows():
-            inter = row.geometry.intersection(buf)
+        lf_areas: dict[str, float] = {}
+        for i in idx:
+            inter = geoms[i].intersection(buf)
             if inter.is_empty:
                 continue
-            areas[row["material_class"]] = areas.get(row["material_class"], 0.0) + inter.area
-        if not areas:
+            a = inter.area
+            m = mats[i]
+            if m is not None and not (isinstance(m, float) and m != m):
+                areas[m] = areas.get(m, 0.0) + a
+            if lfs is not None:
+                lf = lfs[i]
+                if lf is not None and not (isinstance(lf, float) and lf != lf):
+                    lf_areas[str(lf)] = lf_areas.get(str(lf), 0.0) + a
+        if areas:
+            best = max(areas, key=areas.get)
+            cover = areas[best] / buf.area if buf.area > 0 else 0.0
+            materials.append(best if cover >= min_cover else None)
+            covers.append(float(cover))
+        else:
             materials.append(None)
             covers.append(0.0)
-            continue
-        best = max(areas, key=areas.get)
-        cover = areas[best] / buf.area if buf.area > 0 else 0.0
-        materials.append(best if cover >= min_cover else None)
-        covers.append(float(cover))
-    return materials, covers
+        if lf_areas:
+            best_lf = max(lf_areas, key=lf_areas.get)
+            share = lf_areas[best_lf] / buf.area if buf.area > 0 else 0.0
+            landforms.append(best_lf if share >= min_cover else None)
+        else:
+            landforms.append(None)
+    return materials, covers, landforms
 
 
 # -- public -------------------------------------------------------------------
@@ -740,10 +810,11 @@ def rosgen_valley_types(
     # --- material ------------------------------------------------------------
     materials: list[str | None] = [None] * len(seg)
     covers: list[float] = [0.0] * len(seg)
+    landforms: list[str | None] = [None] * len(seg)
     if geology is not None:
         geo = gpd.read_file(str(guard.read_path(geology)))
-        materials, covers = attach_material(seg, geo, buffer_m=buffer_m,
-                                            min_cover=min_cover)
+        materials, covers, landforms = attach_material_landform(
+            seg, geo, buffer_m=buffer_m, min_cover=min_cover)
         resolved = sum(1 for m in materials if m)
         note(f"material resolved for {resolved}/{len(seg)} segments")
         if resolved < len(seg) * 0.5:
@@ -814,6 +885,24 @@ def rosgen_valley_types(
             )
             form_by_seg = {}
 
+    # --- fans the soils map names ---------------------------------------------
+    # A reach on a map unit NRCS calls a fan surface is on a fan, whatever
+    # the cone test made of it; the map also says whether the surface is
+    # being built or is a relict the wash has cut into. Fan ground is
+    # alluvium, so a reach the material step left unresolved there is
+    # alluvial.
+    fan_activity = [fan_from_landform(lf) for lf in landforms]
+    n_lf = sum(1 for a in fan_activity if a)
+    if n_lf:
+        note(f"{n_lf} segments lie on fan surfaces the soils map names "
+             f"({sum(1 for a in fan_activity if a == 'inactive')} relict)")
+    for i, a in enumerate(fan_activity):
+        if a and not materials[i]:
+            materials[i] = "alluvial"
+    fan_source = ["dem+soils" if on_fan[i] and fan_activity[i] else
+                  "dem" if on_fan[i] else "soils" if fan_activity[i] else None
+                  for i in range(len(seg))]
+
     # --- classify ------------------------------------------------------------
     from .landscapes import FLUVIAL_LANDSCAPES, classify_landscape_type
 
@@ -824,18 +913,24 @@ def rosgen_valley_types(
         f = form_by_seg.get(s.get(seg_key)) if form_by_seg else None
         if f:
             n_with_form += 1
-        rows.append(classify_valley_type(
+        fan_here = bool(on_fan[i]) or fan_activity[i] is not None
+        r = classify_valley_type(
             confinement=str(s.get(confinement_field, "unknown")),
             gradient=s.get(gradient_field),
             material=materials[i],
             valley_width_m=s.get(width_field),
-            on_fan=bool(on_fan[i]),
+            on_fan=fan_here,
             form=f,
-        ))
+        )
+        if fan_activity[i] and not on_fan[i]:
+            r["basis"] = (f"on a fan surface the soils map calls "
+                          f"'{landforms[i]}' ({fan_activity[i]})")
+        rows.append(r)
         # Rosgen's 2022 fluvial landscape types, from the same evidence.
         lrows.append(classify_landscape_type(
             confinement=s.get(confinement_field), gradient=s.get(gradient_field),
-            material=materials[i], on_fan=bool(on_fan[i]), form=f))
+            material=materials[i], on_fan=fan_here, form=f,
+            fan_activity=fan_activity[i], landform=landforms[i]))
     if form_by_seg and n_with_form < 0.5 * len(seg):
         warnings.append(
             f"valley form matched only {n_with_form} of {len(seg)} segments. "
@@ -862,6 +957,9 @@ def rosgen_valley_types(
     seg["basis_1996"] = [r["basis"] for r in rows]
     seg["material_class"] = materials
     seg["material_cover"] = covers
+    seg["landform"] = landforms
+    seg["fan_source"] = fan_source
+    seg["fan_activity"] = fan_activity
     seg["landscape_type"] = seg["valley_type"]
     seg["landscape_name"] = seg["valley_type_desc"]
     seg["landscape_alternatives"] = seg["alternatives"]

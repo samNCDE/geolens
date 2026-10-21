@@ -311,3 +311,60 @@ def test_run_with_geology_resolves_types(tmp_path, _env):
     assert r["unresolved"] == 0
     assert r["type_counts"] == {"U-LA-LD": 1, "U-GL-TP": 1}
     assert r["type_counts_1996"] == {"X": 1, "IX": 1}
+
+
+def test_fan_words_from_the_soils_map():
+    from geolens.landscape.rosgen import fan_from_landform
+
+    assert fan_from_landform("fan terraces") == "inactive"
+    assert fan_from_landform("fan remnants") == "inactive"
+    assert fan_from_landform("fan piedmonts; hills") == "inactive"
+    assert fan_from_landform("alluvial fans") == "active"
+    assert fan_from_landform("fans") == "active"
+    assert fan_from_landform("inset fans, fan aprons") == "active"
+    assert fan_from_landform("fan terraces, alluvial fans") == "inactive"
+    for not_a_fan in ("mountains", "stream terraces", "pediments",
+                      "flood plains", "basin floors", "", None, float("nan")):
+        assert fan_from_landform(not_a_fan) is None, not_a_fan
+
+
+def test_a_reach_on_a_mapped_fan_surface_is_on_a_fan(tmp_path, _env):
+    """Kingman: the cone test found 134 fans on a field office whose soils
+    map puts a fifth of the ground on fan surfaces. A reach on a map unit
+    NRCS calls a fan terrace is Type III and U-AL-IF (a relict fan the
+    wash has cut into); on an alluvial fan, U-AL-AF; and fan ground is
+    alluvium even where the material step came back empty."""
+    import geopandas as gpd
+    from shapely.geometry import LineString, box
+    from geolens.landscape.rosgen import (attach_material_landform,
+                                          rosgen_valley_types)
+
+    seg = gpd.GeoDataFrame(
+        {"seg_id": [0, 1, 2], "confinement": ["unconfined"] * 3,
+         "gradient": [0.03, 0.03, 0.01], "valley_width_m": [120.0] * 3},
+        geometry=[LineString([(0, 0), (1000, 0)]),
+                  LineString([(0, 5000), (1000, 5000)]),
+                  LineString([(0, 10000), (1000, 10000)])], crs="EPSG:32612")
+    soils = gpd.GeoDataFrame(
+        {"material_class": ["alluvial", None, "alluvial"],
+         "landform": ["fan terraces", "alluvial fans", "flood plains"]},
+        geometry=[box(-500, -500, 1500, 500), box(-500, 4500, 1500, 5500),
+                  box(-500, 9500, 1500, 10500)], crs="EPSG:32612")
+    mats, covers, lfs = attach_material_landform(seg, soils, buffer_m=200.0)
+    assert lfs == ["fan terraces", "alluvial fans", "flood plains"]
+    assert mats == ["alluvial", None, "alluvial"]
+
+    sp, gp = tmp_path / "segs.gpkg", tmp_path / "soils.gpkg"
+    seg.to_file(str(sp), driver="GPKG")
+    soils.to_file(str(gp), driver="GPKG")
+    r = rosgen_valley_types(str(sp), geology=str(gp), out_prefix="rt_fans")
+    out = gpd.read_file(r.segments).sort_values("seg_id")
+    assert list(out["valley_type"]) == ["U-AL-IF", "U-AL-AF", "U-AL-AD"]
+    assert list(out["valley_type_1996"]) == ["III", "III", "VIII"]
+    assert list(out["fan_activity"].fillna("-")) == ["inactive", "active", "-"]
+    assert list(out["fan_source"].fillna("-")) == ["soils", "soils", "-"]
+    assert list(out["material_class"]) == ["alluvial", "alluvial", "alluvial"]
+    assert "fan terraces" in out.iloc[0]["basis"] and "inactive" in out.iloc[0]["basis"]
+    assert out.iloc[0]["confidence"] == "medium"
+    assert "fan terraces" in out.iloc[0]["basis_1996"]
+    assert list(out["alternatives"])[:2] == ["U-AL-AF", "U-AL-IF"]

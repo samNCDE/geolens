@@ -5,12 +5,34 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 19 Oct 2026 session)
 
-**State.** v0.38.1 beta. The full test suite passes on Linux with numba
+**State.** v0.39.0 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
 The release is unzipped at `S:\geolens\gl33` (the folder name stayed; the
 changed files of each release are committed into it, never while a run
 uses it). The zips and git bundles (`geolens_v0.37.1.bundle`, holding
 v0.30.0 to v0.37.1) are in `S:\geolens\Claude outputs`.
+
+**Pick up here (21 Oct, 2:10 pm Arizona, session limit near).**
+- `S:\kingman\geolens_v38` is running v0.38.1 (started 1:25 pm, level B
+  on every HUC12 with lidar, data steps, lidar calibration; about 8 to 9 am
+  on 22 Oct). Check-ins are scheduled (send_later 3:27 pm, 5 pm, then
+  chained). Do not start another run on that folder; do not change gl33
+  until it ends (a module imported later would be a different version).
+- v0.39.0 (fans from the soils map, below) is built in the dev tree with
+  tests; the full suite was running at the limit. If it passed: release it
+  to `S:\geolens\Claude outputs` (release.sh in the scratchpad; the
+  commit message is ready), not gl33. After the run ends, put v0.39 into
+  gl33 and run the project tool once more on `geolens_v38`: TYPING 3
+  re-types everything in minutes and the summary follows.
+- Then, in Sam's order: stream power per reach and the per-HUC12
+  sensitivity synthesis as a draft for his weights, with a major-streams
+  layer (dissolved by NHD name or branch above a threshold, contributing
+  area at the mouth); the methods write-up v0.28 to v0.39; GitHub cloud
+  runs for laptop recon (workflow_dispatch, level A at 20-30 m in the
+  runner's memory, results as an artifact).
+- A fresh session without this container: unzip
+  `geolens_v0.39.0-beta.zip` from Claude outputs (or clone the bundle) as
+  the dev tree; `python -m pytest tests/ -q` is the gate.
 
 **Sam's review (21 Oct):** the 1996 types had stayed the valley type; the
 valley extent was the catchment ("like the Basin tool"); confinement at
@@ -103,6 +125,32 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.39.0 (beta): fans from the soils map
+
+While the v0.38.1 run went (21 Oct afternoon), from Sam's "what should we
+use the session for": the SSURGO `landform` field per map unit names fan
+surfaces outright ("fan terraces" 6,889 km2 of Kingman, "alluvial fans"
+765, "fan remnants", "fan piedmonts"), which is what the cone test cannot
+see on coalesced fans. `fan_from_landform` reads the words (relict:
+terraces, remnants, piedmonts, bajadas, ballenas; building: alluvial fans,
+aprons, skirts, inset fans, cones); `attach_material_landform` carries the
+dominant landform beside the material, with a spatial index (56 s for
+39,109 reaches against 7,380 polygons; the scan per reach took about 15
+min); a reach on a fan surface is Type III and `U-AL-IF` / `U-AL-AF` at
+medium confidence (the DEM-only fan stays AF low with IF open), its
+material alluvial if unresolved. Columns `landform`, `fan_source`,
+`fan_activity`. `TYPING` 3, so the v0.38.1 run is re-typed on its next
+run. Tested on the first Kingman run's reaches: fans 0.1% -> 43% of stream
+length, U-AL-IF 59%, U-AL-AF 4%.
+
+Sam, same afternoon: GitHub cloud runs from the laptop for recon (the
+wishlist item; a `workflow_dispatch` action taking a boundary, level A at
+20-30 m within the runner's memory, results as an artifact) and a
+**major-streams layer** with contributing drainage area at each stream's
+mouth (`drainage_km2` is on every reach already; dissolve by NHD name or
+branch above a threshold; NHDPlus HR `TotDASqKm` as the cross-check for
+rivers entering from outside the HUC8s). Both on the step list.
 
 ## v0.38.0 (beta): the valley, measured; the 2022 type as the valley type
 

@@ -842,6 +842,21 @@ the stable / unstable form of every HUC12 level B has done is judged again.
   the measured valley floor instead of the HAND area, breaks calibrated
   to the lidar, valley polygons that are the valley bottom and not the
   catchment, and the 2022 landscape type as *the* valley type (above).
+- **v0.39, fans from the soils map:** NRCS's `landform` field names the
+  fan surfaces the cone test cannot see, because coalesced fans are not
+  cones: at Kingman "fan terraces" (8,650 km of stream), "alluvial fans"
+  (1,000 km), "fan remnants" and "fan piedmonts" — a fifth of the field
+  office. A reach whose 200 m buffer is mostly on such a unit is on a fan:
+  Type III, and on the 2022 card `U-AL-IF` where the map says a relict
+  surface the wash has cut into (terraces, remnants, piedmonts, bajadas)
+  or `U-AL-AF` where it says a fan being built (alluvial fans, aprons,
+  skirts, inset fans) — the active-or-inactive call the DEM could not
+  make, at medium confidence. Fan ground is alluvium, so a reach the
+  material step left unresolved there is alluvial. `landform`,
+  `fan_source` (`dem`, `soils`, `dem+soils`) and `fan_activity` are in
+  the layer. Re-typed, 43% of Kingman's stream length is on fan surfaces
+  (0.1% before), U-AL-IF 59% and U-AL-AF 4%. The material step itself is
+  ten times faster (a spatial index instead of a scan per reach).
 - **v0.38.1, the two that were left open:** the alluvial fan search was
   built on a 49 km² DEM, and its 3,000 m radius cap and the slope floor it
   raised itself (to 4.9% at Kingman) excluded Basin-and-Range bajadas, 5

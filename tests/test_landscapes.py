@@ -144,3 +144,20 @@ def test_an_unresolved_type_is_judged_under_each_candidate():
     assert st == "check" and "U-AL-AF -> stable" in note
     st, note = L.landscape_form(None, "U-AL-AF|U-AL-IF", "A")
     assert st == "unstable" and "under each" in note
+
+
+def test_the_soils_map_settles_active_or_inactive():
+    r = L.classify_landscape_type("unconfined", 0.03, "alluvial", on_fan=True,
+                                  fan_activity="inactive", landform="fan terraces")
+    assert r["landscape_type"] == "U-AL-IF" and r["alternatives"] == ["U-AL-AF"]
+    assert r["confidence"] == "medium" and "fan terraces" in r["basis"]
+    r = L.classify_landscape_type("unconfined", 0.03, "alluvial", on_fan=True,
+                                  fan_activity="active", landform="alluvial fans")
+    assert r["landscape_type"] == "U-AL-AF" and r["confidence"] == "medium"
+    # a wash cut into a fan terrace, partly confined: the inactive fan first
+    r = L.classify_landscape_type("partly confined", 0.03, "alluvial", on_fan=True,
+                                  fan_activity="inactive", landform="fan terraces")
+    assert r["landscape_type"] == "U-AL-IF"
+    # the DEM alone still cannot say
+    r = L.classify_landscape_type("unconfined", 0.03, "alluvial", on_fan=True)
+    assert r["landscape_type"] == "U-AL-AF" and r["confidence"] == "low"

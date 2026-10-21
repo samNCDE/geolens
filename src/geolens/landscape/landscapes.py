@@ -121,15 +121,16 @@ def _slope_ok(code: str, pct: float | None) -> bool | None:
 
 
 def _candidates(conf: str, origin: str | None, material: str | None,
-                pct: float | None, on_fan: bool, shape_n: float | None
-                ) -> list[str]:
+                pct: float | None, on_fan: bool, shape_n: float | None,
+                fan_activity: str | None = None) -> list[str]:
     """The card's types this evidence allows, most likely first."""
     if origin is None:
         return []
     if conf == "U":
         if origin == "AL":
             if on_fan:
-                return ["U-AL-AF", "U-AL-IF"]
+                return (["U-AL-IF", "U-AL-AF"] if fan_activity == "inactive"
+                        else ["U-AL-AF", "U-AL-IF"])
             return ["U-AL-AD"] + (["U-AL-IF"] if pct is not None and pct > 3
                                   else [])
         if origin == "MA":
@@ -158,13 +159,19 @@ def _candidates(conf: str, origin: str | None, material: str | None,
 
 def classify_landscape_type(confinement: Any, gradient: Any,
                             material: Any = None, on_fan: bool = False,
-                            form: dict | None = None) -> dict[str, Any]:
+                            form: dict | None = None,
+                            fan_activity: str | None = None,
+                            landform: Any = None) -> dict[str, Any]:
     """A reach's fluvial landscape type from what geolens measures.
 
     ``confinement`` is geolens's class (unconfined, partly confined,
     confined), ``gradient`` the channel slope as a fraction, ``material``
-    a geolens material class, ``on_fan`` whether the reach is on a detected
-    alluvial fan, ``form`` the valley form (``shape_n``: 1 a V, 2 a U).
+    a geolens material class, ``on_fan`` whether the reach is on an
+    alluvial fan (detected on the DEM, or named by the soils map),
+    ``form`` the valley form (``shape_n``: 1 a V, 2 a U). ``fan_activity``
+    is ``"active"`` or ``"inactive"`` when the soils map's ``landform``
+    says which (v0.39): that settles the card's AF / IF, which the DEM
+    cannot.
 
     Returns ``landscape_type`` (None when the evidence leaves more than one
     type), ``alternatives``, ``confidence`` and ``basis``.
@@ -218,7 +225,8 @@ def classify_landscape_type(confinement: Any, gradient: Any,
     if c == "partly confined":
         # The unconfined candidate is the floor's (alluvial when assumed);
         # the confined one keeps the map's material, which names the walls.
-        cands = (_candidates("U", origin, mat, pct, on_fan, shape_n)[:1]
+        cands = (_candidates("U", origin, mat, pct, on_fan, shape_n,
+                             fan_activity)[:1]
                  + (_candidates("C", map_origin, map_mat, pct, on_fan, shape_n)
                     if map_origin else [])[:1])
         fit = [k for k in cands if _slope_ok(k, pct) is not False]
@@ -239,7 +247,7 @@ def classify_landscape_type(confinement: Any, gradient: Any,
                    "partly confined: between the card's unconfined and "
                    "confined types")
     cands = _candidates("U" if c == "unconfined" else "C", origin, mat, pct,
-                        on_fan, shape_n)
+                        on_fan, shape_n, fan_activity)
     if not cands:
         return out(None, [], "low",
                    f"the card has no {c} type built of {mat} material")
@@ -249,6 +257,10 @@ def classify_landscape_type(confinement: Any, gradient: Any,
     # one open (a fan whose wash still crosses its surface is being built
     # along that wash), rather than no type at all on the map.
     if on_fan and c == "unconfined" and origin == "AL":
+        if fan_activity in ("active", "inactive"):
+            return out(cands[0], cands[1:], "medium",
+                       f"on a fan surface the soils map calls "
+                       f"'{landform}' ({fan_activity}), {slope}")
         return out(cands[0], cands[1:], "low",
                    f"on a detected alluvial fan, {slope}; active (AF) or "
                    f"inactive (IF) is a field call")

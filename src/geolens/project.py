@@ -711,7 +711,10 @@ def _data_step(step: str, root: Path, inside, st: "_Status",
 #      a broad gentle floor under a hillslope's map unit is alluvial (VIII);
 #      the 2022 card: an unconfined floor is stream-built, partly confined
 #      leans unconfined
-TYPING = 2
+#   3  v0.39: fan surfaces from the soils map's landform (fan terraces,
+#      alluvial fans ...): Type III, U-AL-IF / U-AL-AF; the 2022 type is
+#      the valley type (v0.38) and confinement is from the measured floor
+TYPING = 3
 
 
 def _retype_valleys(root: Path, A: Path, st: "_Status", pa: dict) -> dict:
