@@ -1182,7 +1182,8 @@ Options: `--level-b`, `--pilots`, `--pilot-by`, `--huc12s`, `--geology`
 (`ssurgo`, `auto`, `none`), `--curve`, `--threshold-km2`, `--hours`,
 `--no-plots`, `--no-soils`, `--data` (v0.37: `all`, `none`, or some of
 `fire,ecosites,prism,atlas14,rap`), `--no-calibration` and
-`--keep-lidar-dem` (v0.38). A line or point boundary is buffered by 250 m.
+`--keep-lidar-dem` (v0.38), `--major-km2` and `--weights` (v0.40),
+`--cell-a` (v0.41). A line or point boundary is buffered by 250 m.
 In Python:
 
 ```python
@@ -1395,6 +1396,30 @@ summary, not only these) given as `sensitivity_weights=` (toolbox
 *Sensitivity weights file*; shell `--weights`) re-ranks on the next run
 without re-running anything else. The ranks are relative to this
 project's HUC12s, so a score is not comparable between field offices.
+
+### Reconnaissance runs: a coarser level A, and GitHub's machines (v0.41)
+
+A laptop, or a free cloud runner, cannot hold a field office at 10 m (the
+Kingman level A pass peaked at 70 GB). `level_a_cell_m=30` (toolbox *Level
+A cell size*; shell `--cell-a 30`) fetches the 1/3 arc-second DEM straight
+onto a 30 m grid, nine times fewer cells, and the whole project runs as
+usual with a warning that valleys narrower than 90 m are not resolved.
+Finer than 10 m is refused (the product is 10 m). The project coarsens on
+its own anyway when the planner says the DEM will not fit, so the option
+only saves the download and the first attempt.
+
+`.github/workflows/recon.yml` runs such a project on GitHub's own machine
+from any laptop: *Actions ▸ Reconnaissance run ▸ Run workflow*, give the
+boundary (a map service URL with its where clause, or a file committed
+under `boundaries/`), the cell size (30), level B none or a short pilot
+with a time limit, and the data steps. The runner installs geolens from
+the repo, runs `geolens project`, and keeps `merged/`, `RESULTS.md`,
+`project.json` and the data CSVs as a zipped artifact on the run's page
+for 30 days. GitHub's free Linux runner has 4 cores and 16 GB, a job may
+run 6 hours, and the free plan has 2,000 minutes a month on a private
+repo; every download the runner makes is public (no login is needed for
+any of them, and none is used). It has not been run yet: the first
+dispatch is its test, and the repo must be on GitHub (Sam's push) first.
 
 ### Portable: everything on one drive (v0.33)
 

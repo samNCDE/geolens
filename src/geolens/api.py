@@ -1610,6 +1610,7 @@ def run_project(
     keep_lidar_dem: bool | None = None,
     major_streams_km2: float = 25.0,
     sensitivity_weights: dict | str | None = None,
+    level_a_cell_m: float | None = None,
 ) -> dict[str, Any]:
     """A whole project area, any size: valleys everywhere, channels on lidar.
 
@@ -1651,7 +1652,9 @@ def run_project(
     ``major_streams``, and ``huc12_sensitivity`` ranks the HUC12s by the
     weighted percentile ranks of what the summary measured
     (``sensitivity_weights``: a dict or JSON file of summary column ->
-    weight; ``geolens.synthesis.COMPONENTS`` by default).
+    weight; ``geolens.synthesis.COMPONENTS`` by default). ``level_a_cell_m``
+    (default 10) asks for a coarser level A grid, fetched as such, for a
+    reconnaissance run within a laptop's or a cloud runner's memory.
     """
     from .project import run_project as _rp
 
@@ -1665,7 +1668,8 @@ def run_project(
                calibrate_confinement=calibrate_confinement,
                keep_lidar_dem=keep_lidar_dem,
                major_streams_km2=major_streams_km2,
-               sensitivity_weights=sensitivity_weights)
+               sensitivity_weights=sensitivity_weights,
+               level_a_cell_m=level_a_cell_m)
 
 
 def check_services(timeout: int = 20) -> dict[str, Any]:

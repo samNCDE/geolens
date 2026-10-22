@@ -338,6 +338,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="JSON file of HUC12 summary column -> weight for "
                         "the sensitivity table (default: the built-in set; "
                         "merged/sensitivity_weights.json shows it)")
+    s.add_argument("--cell-a", type=float, default=None,
+                   help="level A grid in metres (default 10; 20 or 30 for a "
+                        "reconnaissance run on a laptop or a cloud runner)")
 
     sub.add_parser("backends", help="show which flow-routing backends are installed")
     s = sub.add_parser("history", help="what has been run in this output directory")
@@ -631,7 +634,8 @@ def main(argv: list[str] | None = None) -> int:
                 calibrate_confinement=not args.no_calibration,
                 keep_lidar_dem=True if args.keep_lidar_dem else None,
                 major_streams_km2=args.major_km2,
-                sensitivity_weights=args.weights)
+                sensitivity_weights=args.weights,
+                level_a_cell_m=args.cell_a)
             _print({"project": r.get("project"),
                     "results": str(out / "RESULTS.md"),
                     "huc12_summary": r.get("huc12_summary"),

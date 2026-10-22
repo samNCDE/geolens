@@ -998,6 +998,9 @@ class RunProject(_Tool):
             P("Sensitivity weights file (JSON: summary column -> weight; "
               "blank = the built-in set)", "weights", "DEFile",
               required=False, category=OPT),
+            P("Level A cell size, m (10 = the 1/3 arc-second DEM; 20 or 30 "
+              "for a reconnaissance run on a laptop)", "cell_a", "GPDouble",
+              default=10.0, category=OPT),
             D("Valley types", "out_valley_types"),
             D("Stream types", "out_stream_types"),
             D("Stream-type sections", "out_sections"),
@@ -1047,6 +1050,9 @@ class RunProject(_Tool):
             "keep_lidar_dem": True if v["keep_dem"].value else None,
             "major_streams_km2": v["major_km2"].value or 25.0,
             "sensitivity_weights": ga.text(v["weights"]) or None,
+            "level_a_cell_m": (float(v["cell_a"].value)
+                               if v["cell_a"].value and
+                               float(v["cell_a"].value) > 10.0 else None),
         }, out, "project")
         arcpy.AddMessage("level B: %s" % res.get("level_b"))
         arcpy.AddMessage("results: %s" % os.path.join(out, "RESULTS.md"))

@@ -23,7 +23,7 @@ from shapely.ops import transform  # noqa: E402
 from pyproj import Transformer  # noqa: E402
 
 from geolens import api, project  # noqa: E402
-from geolens.safety import Guard  # noqa: E402
+from geolens.safety import GeolensError, Guard  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 DEM = ROOT / "tests" / "landscape" / "landscape_dem.tif"
@@ -73,6 +73,7 @@ def stubs(monkeypatch, tmp_path):
         shutil.copyfile(DEM, dst)
         (out / "dem_tiles").mkdir(exist_ok=True)
         calls["fetch"].append(source)
+        calls.setdefault("res", []).append(resolution_m)
         return {"dem": str(dst), "coverage": 1.0, "lidar_fraction": 1.0,
                 "cell_size_m": 30.0, "crs": UTM, "warnings": []}
 
@@ -95,6 +96,9 @@ def stubs(monkeypatch, tmp_path):
     monkeypatch.setattr("geolens.dem_fetch.search_1m", search_1m)
     monkeypatch.setattr(api, "fetch_dem", fetch_dem)
     monkeypatch.setattr(project, "_data_step", data_step)
+    monkeypatch.setattr("geolens.wsdata.nhd_flowlines",
+                        lambda *a, **k: {"path": None, "flowlines": 0,
+                                         "named": 0})
     monkeypatch.setenv("GEOLENS_PERSIST", "0")
     return calls
 
@@ -159,6 +163,18 @@ def test_a_project_runs_in_two_levels_and_resumes(stubs, tmp_path):
     assert "## Watershed data by HUC12" in report
     assert "| fire history | NIFC InterAgency Fire Perimeter History | 2 fire perimeters |" in report
     assert "| vegetation cover | Rangeland Analysis Platform cover v3, 30 m | 1986 to 2025 |" in report
+
+    # The last step: stream power and a stream id on every reach, the major
+    # streams, and the sensitivity table -- which two HUC12s cannot have,
+    # and the report says so instead of failing.
+    assert res.get("major_streams") and Path(res["major_streams"]).exists()
+    assert "## Stream power, major streams and the sensitivity table" in report
+    assert "fewer than 3" in report
+    vt_again = gpd.read_file(res["valley_types"])
+    assert {"stream_id", "dist_to_mouth_km", "q_bankfull_m3s",
+            "unit_stream_power_w_m2"} <= set(vt_again.columns)
+    assert vt_again["stream_id"].ge(1).all()
+    assert status["synthesis"]["tracing"]["outlets"] >= 1
 
     # Again: nothing is fetched or recomputed; the merged layers are rebuilt.
     again = project.run_project(str(bnd), level_b="pilot", pilot_count=1,
@@ -705,3 +721,25 @@ def test_the_lidar_entrenchment_is_read_from_the_level_b_layers(stubs, tmp_path)
         assert (lid["huc12"] == "150100000101").all()
         cal = status["confinement"]
         assert cal.get("breaks") or cal.get("skipped")
+
+
+def test_a_reconnaissance_run_asks_for_a_coarser_level_a(stubs, tmp_path):
+    """A laptop or a cloud runner asks for level A at 30 m: the DEM is
+    fetched straight onto that grid, and the report says what that costs.
+    Finer than the 1/3 arc-second product is refused."""
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["field office"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    with pytest.raises(GeolensError):
+        project.run_project(str(bnd), level_b="none", geology=None,
+                            soils=False, data="none", level_a_cell_m=5.0,
+                            guard=Guard(out_dir=tmp_path / "fine"))
+    out = tmp_path / "recon"
+    project.run_project(str(bnd), level_b="none", stream_threshold_km2=3.0,
+                        geology=None, section_plots=False, soils=False,
+                        data="none", level_a_cell_m=30.0,
+                        guard=Guard(out_dir=out))
+    assert stubs["res"][-1] == 30.0
+    report = (out / "RESULTS.md").read_text()
+    assert "asked for at 30 m" in report and "narrower than 90 m" in report

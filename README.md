@@ -6,7 +6,7 @@ types, and judges whether each reach's stream type is a **stable or unstable
 form for its valley**. Every channel section it measures comes with a plot you
 can click on the map.
 
-*Beta (v0.40). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
+*Beta (v0.41). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
 or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 
 ---
@@ -81,6 +81,11 @@ carry on where it stopped. The same from a shell:
 ```
 geolens project boundary.gpkg
 ```
+
+**From a laptop, on GitHub's machines.** The repo's *Reconnaissance run*
+workflow (Actions) runs a project at 30 m on a free runner and hands the
+results back as a download; `--cell-a 30` does the same coarse run on a
+laptop.
 
 ## Use it
 

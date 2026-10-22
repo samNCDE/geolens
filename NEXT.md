@@ -3,9 +3,9 @@
 **Start with [OVERVIEW.md](OVERVIEW.md)** — what the tool does, how to run it,
 and what to trust. This file is the working log behind it.
 
-## Pick up here (state at the end of the 19 Oct 2026 session)
+## Pick up here (state at the end of the 21 Oct 2026 session)
 
-**State.** v0.40.0 beta. The full test suite passes on Linux with numba
+**State.** v0.41.0 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
 The release is unzipped at `S:\geolens\gl33` (the folder name stayed; the
 changed files of each release are committed into it, never while a run
@@ -32,11 +32,12 @@ v0.30.0 to v0.37.1) are in `S:\geolens\Claude outputs`.
   major streams, the sensitivity table on the first run's data, without
   slope, RAP, fire or Atlas 14, which the v0.38.1 run brings). The
   weights are a proposal for him to change.
-- Then, in Sam's order: the methods write-up v0.28 to v0.40; GitHub cloud
-  runs for laptop recon (workflow_dispatch, level A at 20-30 m in the
-  runner's memory, results as an artifact); NHD names onto the major
-  streams (NHDPlus HR `GNIS_Name`, `TotDASqKm` as the cross-check for
-  rivers entering from outside the HUC8s).
+- Done since: the methods write-up (v0.40, `docs/`), the reconnaissance
+  option, the GitHub workflow and the NHD names on the major streams
+  (v0.41; the workflow and the NHD fetch untested live). Next: the
+  piedmont-surface fan test;
+  the step list (StreamStats, USNVC/LANDFIRE, hydrography, the portable
+  drive test).
 - **Sam, 21 Oct, 4:10 pm:** if the v0.38.1 run finishes before 8 am
   Arizona on 22 Oct, put v0.40.0 into gl33 and run the latest version on
   the whole field office into a new folder (`S:\kingman\geolens_v40`,
@@ -44,8 +45,8 @@ v0.30.0 to v0.37.1) are in `S:\geolens\Claude outputs`.
   it finishes after 8 am, report and hold; his fallback is Friday 23 Oct,
   4:30 pm Arizona, to run over the weekend (he will cancel a daytime run
   that slows his computer). The check-in prompts carry this.
-- A fresh session without this container: unzip
-  `geolens_v0.40.0-beta.zip` from Claude outputs (or clone the bundle) as
+- A fresh session without this container: unzip the newest
+  `geolens_v0.4x.x-beta.zip` from Claude outputs (or clone the bundle) as
   the dev tree; `python -m pytest tests/ -q` is the gate.
 
 **Sam's review (21 Oct):** the 1996 types had stayed the valley type; the
@@ -139,6 +140,36 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.41.0 (beta): reconnaissance runs; the major streams named from the NHD
+
+**NHD names.** A project fetches the NHDPlus HR network flowlines over its
+HUC12s (`wsdata.nhd_flowlines`: GNIS-named, or draining at least the
+major-streams threshold; simplified to 20 m; step `nhd`, resumable, a
+warning if the service fails) and `synthesis.name_streams` gives each
+major stream the name covering at least half its length within 150 m,
+the mouth zone left out so a tributary does not take the river's name;
+`nhd_totdasqkm` at the mouth and `drainage_ratio` are the cross-check
+Sam asked for (rivers entering from outside the HUC8s show under 0.5).
+`major_streams` now carries `mouth_x`, `mouth_y`. The service is
+reachable from Sam's machine, not from here (the proxy refuses the host),
+so the first live fetch is the re-run on `geolens_v38`.
+
+
+Sam's item 4 ("github cloud integration so i can use this from my laptop
+for recon using cloud computing"). `run_project(level_a_cell_m=30)`
+(`--cell-a`, the toolbox's *Level A cell size*) fetches the 1/3
+arc-second DEM straight onto a coarser grid, with the warning in
+RESULTS.md; and `.github/workflows/recon.yml` is a `workflow_dispatch`
+job (boundary URL + where or a committed file, cell size, level B none or
+a short pilot, the data steps) that installs geolens from the repo, runs
+`geolens project`, and uploads `merged/`, RESULTS.md, project.json and
+the data CSVs as an artifact. Untested on GitHub (no access from here;
+Sam's push puts the repo there): the first dispatch is its test. Things
+most likely to need a fix: pip-installing the landscape extras on
+ubuntu-latest (rasterio/geopandas wheels, numba < 0.62), the runner's
+network reaching 3DEP, the WBD, BLM and SSURGO, and the 6-hour limit on a
+big boundary (level B off, or a 1-HUC12 pilot with `--hours 2`).
 
 ## v0.40.0 (beta): stream power, major streams, the sensitivity table
 

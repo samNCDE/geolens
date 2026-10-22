@@ -1,0 +1,104 @@
+# A reconnaissance run of a project area on GitHub's own machines, started
+# from a laptop (Actions > "Reconnaissance run" > Run workflow). Level A at a
+# coarse grid within the runner's memory, the watershed data steps, the
+# summary and the synthesis; level B only as a short pilot, if asked. The
+# results come back as a zipped artifact (merged layers, RESULTS.md, the
+# HUC12 summary and sensitivity tables) to download from the run's page.
+#
+# Every download a public runner makes is public; nothing here needs a
+# login. The free plan's standard Linux runner has 4 cores and 16 GB, a job
+# may run 6 hours, and artifacts are kept 30 days.
+name: Reconnaissance run
+
+on:
+  workflow_dispatch:
+    inputs:
+      boundary:
+        description: "Boundary: a map service layer URL, or a file in this repo (boundaries/<name>.gpkg, .geojson, .kml)"
+        required: true
+        default: "https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer/3"
+      where:
+        description: "Which features of a map service layer (blank for a file)"
+        required: false
+        default: "ADM_UNIT_CD='AZC01000'"
+      cell_m:
+        description: "Level A cell size in metres (30 fits a field office in the runner's memory; 20 for a smaller area)"
+        required: true
+        default: "30"
+      level_b:
+        description: "Level B on 1 m lidar"
+        required: true
+        type: choice
+        options: ["none", "pilot"]
+        default: "none"
+      pilots:
+        description: "Pilot HUC12s when level B is pilot"
+        required: false
+        default: "1"
+      data:
+        description: "Watershed data steps: all, none, or some of fire,ecosites,prism,atlas14,rap"
+        required: true
+        default: "all"
+      hours:
+        description: "Stop level B after this many hours (the whole job stops at 6)"
+        required: false
+        default: "2"
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install geolens
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[landscape]"
+          python -c "import geolens; print('geolens', geolens.__version__)"
+          geolens backends
+
+      - name: Run the project
+        env:
+          GEOLENS_NO_PROGRESS: "1"
+          BOUNDARY: ${{ inputs.boundary }}
+          WHERE: ${{ inputs.where }}
+          CELL_M: ${{ inputs.cell_m }}
+          LEVEL_B: ${{ inputs.level_b }}
+          PILOTS: ${{ inputs.pilots }}
+          DATA: ${{ inputs.data }}
+          HOURS: ${{ inputs.hours }}
+        run: |
+          set -euo pipefail
+          mkdir -p recon
+          args=(--out recon --level-b "$LEVEL_B" --pilots "${PILOTS:-1}" \
+                --data "$DATA" --cell-a "$CELL_M" --no-plots)
+          if [ -n "$WHERE" ]; then args+=(--where "$WHERE"); fi
+          if [ "$LEVEL_B" != "none" ] && [ -n "$HOURS" ]; then args+=(--hours "$HOURS"); fi
+          geolens project "$BOUNDARY" "${args[@]}"
+
+      - name: Pack the results
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp recon/project.json out/ 2>/dev/null || true
+          cp recon/RESULTS.md out/ 2>/dev/null || true
+          cp recon/huc12.gpkg out/ 2>/dev/null || true
+          [ -d recon/merged ] && cp -r recon/merged out/merged || true
+          [ -d recon/data ] && mkdir -p out/data && cp recon/data/*.csv out/data/ 2>/dev/null || true
+          du -sh out || true
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: geolens-recon-${{ github.run_number }}
+          path: out
+          retention-days: 30
+          if-no-files-found: warn

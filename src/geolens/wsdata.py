@@ -123,6 +123,22 @@ def _shares_by_huc(layer, hucs, value_col: str, utm, prefix: str):
 
 # -- fire -----------------------------------------------------------------------------
 
+def _polygonal(geom):
+    """The polygon parts of a geometry (a GeometryCollection's polygons
+    unioned; lines and points dropped), or None when there are none."""
+    if geom is None or geom.is_empty:
+        return None
+    if geom.geom_type in ("Polygon", "MultiPolygon"):
+        return geom
+    if geom.geom_type == "GeometryCollection":
+        from shapely.ops import unary_union
+
+        parts = [p for p in geom.geoms
+                 if p.geom_type in ("Polygon", "MultiPolygon") and not p.is_empty]
+        return unary_union(parts) if parts else None
+    return None
+
+
 def fire_history(hucs, out_dir: Path, timeout: int = 120,
                  query: Callable | None = None) -> dict[str, Any]:
     """NIFC fire perimeters over the HUC12s, and per HUC12 the share burned
@@ -170,7 +186,12 @@ def fire_history(hucs, out_dir: Path, timeout: int = 120,
     g = g[g.geometry.notna() & ~g.geometry.is_empty]
     g["geometry"] = g.geometry.make_valid() if hasattr(g.geometry, "make_valid") \
         else g.geometry.buffer(0)
-    g = g[g.geom_type.isin(["Polygon", "MultiPolygon", "GeometryCollection"])]
+    # make_valid turns a self-touching perimeter into a GeometryCollection
+    # of polygons AND the slivers it cut off as lines; a union over those
+    # is "mixed-dimension" and GEOS refuses it (the Kingman v0.38.1 run's
+    # fire step). Keep the area only.
+    g["geometry"] = g.geometry.apply(_polygonal)
+    g = g[g.geometry.notna() & ~g.geometry.is_empty]
     g[["fire_year", "incident", "geometry"]].to_file(path, driver="GPKG",
                                                       layer="fire_perimeters")
     gu = g.to_crs(utm)
@@ -433,6 +454,46 @@ def atlas14_depths(hucs, cache: Path, get: Callable | None = None,
         raise GeolensError("NOAA Atlas 14 answered for none of the HUC12s.")
     return {"table": pd.DataFrame.from_dict(rows, orient="index"),
             "failed": failed}
+
+
+# -- NHDPlus HR flowlines: names and drainage areas for the major streams ---------------
+
+NHDPLUS_HR_FLOWLINES = ("https://hydro.nationalmap.gov/arcgis/rest/services/"
+                        "NHDPlus_HR/MapServer/3")          # NetworkNHDFlowline
+NHD_FIELDS = ("permanent_identifier,gnis_id,gnis_name,lengthkm,ftype,fcode,"
+              "nhdplusid,streamorde,totdasqkm,areasqkm,qama,qema")
+
+
+def nhd_flowlines(hucs, out_dir: Path, min_km2: float = 25.0,
+                  timeout: int = 120, query: Callable | None = None
+                  ) -> dict[str, Any]:
+    """The NHDPlus HR network flowlines over the HUC12s that carry a GNIS
+    name, or drain at least ``min_km2`` (``totdasqkm``), with their stream
+    order and the EROM mean annual flows (``qama``, ``qema``, cfs). Written
+    to ``out_dir/nhd_flowlines.gpkg``; what the major streams take their
+    names and their drainage cross-check from."""
+    import geopandas as gpd
+
+    if query is None:
+        from .project import query_layer as query
+    out_dir.mkdir(parents=True, exist_ok=True)
+    wgs = hucs.to_crs(4326)
+    bbox = tuple(float(v) for v in wgs.total_bounds)
+    where = (f"gnis_name IS NOT NULL OR totdasqkm >= {float(min_km2):g}")
+    # Simplified to about 20 m on the way (the names and the drainage are
+    # what matter; the lines only have to lie within 150 m of ours).
+    got = query(NHDPLUS_HR_FLOWLINES, where=where, fields=NHD_FIELDS,
+                bbox=bbox, max_offset=0.0002, timeout=timeout)
+    path = out_dir / "nhd_flowlines.gpkg"
+    if got is None or len(got) == 0:
+        return {"path": None, "flowlines": 0, "named": 0}
+    g = got[got.geometry.notna() & ~got.geometry.is_empty].copy()
+    g.columns = [c.lower() for c in g.columns]
+    g = gpd.GeoDataFrame(g, geometry="geometry", crs="EPSG:4326")
+    g.to_file(str(path), driver="GPKG", layer="nhd_flowlines")
+    named = int(g["gnis_name"].notna().sum()) if "gnis_name" in g.columns else 0
+    return {"path": str(path), "flowlines": int(len(g)), "named": named,
+            "source": "NHDPlus HR NetworkNHDFlowline (USGS)"}
 
 
 # -- RAP vegetation cover --------------------------------------------------------------

@@ -23,8 +23,8 @@ gpd = pytest.importorskip("geopandas")
 from shapely.geometry import LineString  # noqa: E402
 
 from geolens.synthesis import (COMPONENTS, DEFAULT_WEIGHTS, huc12_power,  # noqa: E402
-                               huc12_sensitivity, major_streams, stream_power,
-                               synthesize, trace_streams)
+                               huc12_sensitivity, major_streams, name_streams,
+                               stream_power, synthesize, trace_streams)
 
 
 def _net():
@@ -276,3 +276,54 @@ def test_synthesize_writes_the_layers_and_the_weights(tmp_path):
         "only two HUC12s have reaches"
     layer = gpd.read_file(merged / "huc12_sensitivity.gpkg")
     assert layer.geometry.notna().sum() == 2, "polygons for the two HUC12s given"
+
+
+def _flowlines():
+    """NHD-like flowlines: a named one along the trunk, offset 40 m; a
+    second name on the trunk's upper part; one unnamed line with the NHD's
+    drainage at the mouth; and a named line far away."""
+    return gpd.GeoDataFrame({
+        "gnis_name": ["Dry Wash", "Upper Dry Wash", None, "Elsewhere Creek"],
+        "gnis_id": ["100", "101", None, "200"],
+        "totdasqkm": [95.0, 30.0, 110.0, 500.0],
+        "streamorde": [4, 3, 4, 5],
+        "qema": [12.5, 3.0, 13.0, 90.0],
+        "geometry": [LineString([(300, 40), (1500, 40)]),
+                     LineString([(-500, 40), (300, 40)]),
+                     LineString([(1500, 0), (1600, -50)]),
+                     LineString([(0, 5000), (1500, 5000)])]},
+        crs="EPSG:32612")
+
+
+def test_major_streams_take_their_names_and_the_nhd_drainage():
+    seg, _ = trace_streams(_net())
+    seg = stream_power(seg, "arid_sw_az")
+    ms = name_streams(major_streams(seg, min_drainage_km2=20.0), _flowlines())
+    trunk = ms.set_index("stream_id").loc[1]
+    assert trunk["name"] == "Dry Wash" and trunk["gnis_id"] == "100"
+    assert 0.4 <= trunk["name_share"] <= 1.0
+    assert trunk["other_names"] == "Upper Dry Wash"
+    assert trunk["nhd_totdasqkm"] == 110.0, "the unnamed line at the mouth"
+    assert trunk["nhd_streamorde"] == 4 and trunk["nhd_qema_cfs"] == 13.0
+    assert trunk["drainage_ratio"] == pytest.approx(100.0 / 110.0, abs=0.01)
+    trib = ms.set_index("stream_id").loc[ms["stream_id"].max()]
+    assert pd.isna(trib["name"]), "the tributary runs beside no named flowline"
+    # no flowlines at all: the columns exist, empty
+    bare = name_streams(major_streams(seg, 20.0), _flowlines().iloc[0:0])
+    assert bare["name"].isna().all() and "drainage_ratio" in bare.columns
+
+
+def test_synthesize_names_the_streams_when_given_flowlines(tmp_path):
+    net = _net()
+    full = tmp_path / "valley_types.gpkg"
+    net.to_file(full, driver="GPKG", layer="valley_types")
+    fl = tmp_path / "nhd_flowlines.gpkg"
+    _flowlines().to_file(fl, driver="GPKG", layer="nhd_flowlines")
+    merged = tmp_path / "merged"
+    merged.mkdir()
+    r = synthesize(merged, valley_types=full, curve="arid_sw_az",
+                   min_drainage_km2=20.0, flowlines=fl)
+    assert r["named"] == 1 and r["largest"][0]["name"] == "Dry Wash"
+    assert r["largest"][0]["nhd_totdasqkm"] == 110.0
+    ms = gpd.read_file(merged / "major_streams.gpkg")
+    assert "name" in ms.columns and ms["name"].notna().sum() == 1

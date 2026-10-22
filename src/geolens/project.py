@@ -984,6 +984,7 @@ def run_project(boundary: str, where: str | None = None,
                 keep_lidar_tiles: bool = False,
                 major_streams_km2: float = 25.0,
                 sensitivity_weights: dict | str | None = None,
+                level_a_cell_m: float | None = None,
                 timeout: int = 120,
                 guard: Guard | None = None) -> dict[str, Any]:
     """Level A over the whole area, level B by HUC12, merged layers, a
@@ -1002,8 +1003,11 @@ def run_project(boundary: str, where: str | None = None,
     drainage at the mouth a stream needs to be in ``major_streams``.
     ``sensitivity_weights``: the HUC12 sensitivity table's weights, a dict
     or a JSON file of summary column -> weight (``synthesis.COMPONENTS``
-    by default). Resumes a project folder that already has a
-    ``project.json``."""
+    by default). ``level_a_cell_m``: the level A grid (default 10 m, the
+    1/3 arc-second DEM's own; 20 or 30 m for a reconnaissance run on a
+    laptop or a cloud runner, where the DEM is fetched straight onto the
+    coarser grid; valleys narrower than three cells are not resolved).
+    Resumes a project folder that already has a ``project.json``."""
     import geopandas as gpd
 
     pilot_by = (pilot_by or "representative").lower()
@@ -1054,7 +1058,12 @@ def run_project(boundary: str, where: str | None = None,
     if not st.step("dem_a"):
         from .sar import _utm_for
 
-        note("project: level A DEM (3DEP 1/3 arc-second, 10 m)")
+        cell_asked = float(level_a_cell_m or LEVEL_A_CELL_M)
+        if cell_asked < LEVEL_A_CELL_M:
+            raise GeolensError(f"level_a_cell_m is {cell_asked:g} m; the "
+                               f"level A DEM is the 1/3 arc-second product, "
+                               f"{LEVEL_A_CELL_M:g} m at best.")
+        note(f"project: level A DEM (3DEP 1/3 arc-second, {cell_asked:g} m)")
         utm = _utm_for(bnd_wgs.centroid.x, bnd_wgs.centroid.y)
         area = gpd.GeoDataFrame(geometry=[_union(hucs)], crs=hucs.crs
                                 ).to_crs(utm)              # buffered in metres
@@ -1063,9 +1072,13 @@ def run_project(boundary: str, where: str | None = None,
         area.to_file(str(area_path), driver="GPKG", layer="area")
         with _out(A / "dem"):
             d = api.fetch_dem(str(area_path), source="1/3",
-                              resolution_m=LEVEL_A_CELL_M, buffer_m=300.0)
+                              resolution_m=cell_asked, buffer_m=300.0)
         for w in d.get("warnings") or []:
             st.warn(f"level A DEM: {w}")
+        if cell_asked > LEVEL_A_CELL_M:
+            st.warn(f"Level A was asked for at {cell_asked:g} m (a "
+                    f"reconnaissance run): valleys narrower than "
+                    f"{3 * cell_asked:g} m are not resolved.")
         st.done("dem_a", dem=d["dem"], cell_m=d.get("cell_size_m"),
                 coverage=d.get("coverage"), crs=d.get("crs"))
     dem_a = st.step("dem_a")["dem"]
@@ -1107,6 +1120,22 @@ def run_project(boundary: str, where: str | None = None,
         except Exception as exc:                             # noqa: BLE001
             st.warn(f"SSURGO soils could not be fetched ({type(exc).__name__}: "
                     f"{str(exc)[:200]}); run the project again to retry.")
+
+    # 4b. NHDPlus HR flowlines: names and drainage areas for the major streams ---------
+    if not st.step("nhd"):
+        note("project: NHDPlus HR flowlines (names for the major streams)")
+        try:
+            from .wsdata import nhd_flowlines
+
+            nres = nhd_flowlines(hucs, root / "data", min_km2=major_streams_km2,
+                                 timeout=timeout)
+            st.done("nhd", **nres)
+            st.unwarn("The NHDPlus HR flowlines could not be fetched")
+        except Exception as exc:                             # noqa: BLE001
+            st.warn(f"The NHDPlus HR flowlines could not be fetched "
+                    f"({type(exc).__name__}: {str(exc)[:200]}); the major "
+                    f"streams will have no names. Run the project again to "
+                    f"retry.")
 
     # 5. level A pass --------------------------------------------------------------------
     if not st.step("pass_a"):
@@ -1321,7 +1350,8 @@ def run_project(boundary: str, where: str | None = None,
                          curve=curve, merged=merged["valley_types"],
                          summary_csv=root / "merged" / "huc12_summary.csv",
                          hucs=inside, min_drainage_km2=major_streams_km2,
-                         weights=sensitivity_weights, cell_m=cell_a)
+                         weights=sensitivity_weights, cell_m=cell_a,
+                         flowlines=(st.step("nhd") or {}).get("path"))
         merged["major_streams"] = syn["major_streams"]
         if syn.get("sensitivity_layer"):
             merged["huc12_sensitivity"] = syn["sensitivity_layer"]
@@ -1613,12 +1643,31 @@ def _synthesis_lines(syn: dict | None) -> list[str]:
             f"{syn.get('min_drainage_km2', 25):g} km² at the mouth, one line "
             f"each, with the drainage at the mouth, length, gradient, stream "
             f"power, dominant landscape type and the shares on fans and "
-            f"unconfined. Names are not attached yet (NHD names are next)."]
+            f"unconfined."]
+    if syn.get("named") is not None:
+        ratio = syn.get("drainage_ratio_median")
+        out[-1] += (f" {syn['named']:,} of them carry a GNIS name from the "
+                    f"NHDPlus HR flowlines within 150 m (`name`; the name "
+                    f"covering most of the stream, others in `other_names`), "
+                    f"and `nhd_totdasqkm` is the NHD's drainage at the mouth: "
+                    f"`drainage_ratio` (traced over NHD) is "
+                    f"{ratio if ratio is not None else '?'} at the median; "
+                    f"{syn.get('entering_from_outside', 0):,} streams are "
+                    f"under 0.5, rivers entering from outside the project's "
+                    f"HUC8s, whose traced drainage is local only.")
+    elif syn.get("naming_failed"):
+        out[-1] += f" Naming from the NHD failed ({syn['naming_failed']})."
+    else:
+        out[-1] += " No NHD flowlines were fetched, so no names."
     if syn.get("largest"):
-        out += ["", "| Stream | Drainage at mouth, km² | Length, km | Main "
-                "landscape type | HUC12 at mouth |", "|---|---|---|---|---|"]
+        out += ["", "| Stream | Name | Drainage at mouth, km² | NHD drainage, "
+                "km² | Length, km | Main landscape type | HUC12 at mouth |",
+                "|---|---|---|---|---|---|---|"]
         for r in syn["largest"]:
-            out.append(f"| {r['stream_id']} | {r['drainage_km2']:,.0f} | "
+            nhd = r.get("nhd_totdasqkm")
+            out.append(f"| {r['stream_id']} | {r.get('name') or ''} | "
+                       f"{r['drainage_km2']:,.0f} | "
+                       f"{'' if nhd is None or nhd != nhd else f'{nhd:,.0f}'} | "
                        f"{r['length_km']:,.1f} | {r.get('landscape_main') or ''} "
                        f"| {r.get('huc12_mouth') or ''} |")
     sens = syn.get("sensitivity")

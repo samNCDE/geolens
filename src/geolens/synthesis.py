@@ -476,6 +476,12 @@ def major_streams(segments, min_drainage_km2: float = 25.0):
         km = pd.to_numeric(g["length_m"], errors="coerce").to_numpy(float) / 1000.0 \
             if "length_m" in g.columns else g.geometry.length.to_numpy(float) / 1000.0
         mouth = g.loc[g["dist_to_mouth_km"].idxmin()]
+        mg = mouth.geometry
+        if mg.geom_type == "MultiLineString":
+            ends = (mg.geoms[0].coords[0], mg.geoms[-1].coords[-1])
+        else:
+            ends = (mg.coords[0], mg.coords[-1])
+        mouth_xy = ends[0] if bool(mouth.get("flow_reversed", False)) else ends[1]
         geom = unary_union(list(g.geometry))
         if geom.geom_type == "MultiLineString":
             geom = linemerge(geom)
@@ -497,6 +503,8 @@ def major_streams(segments, min_drainage_km2: float = 25.0):
             if "gradient" in g.columns else None,
             "huc12_mouth": (str(mouth["huc12"]) if "huc12" in g.columns
                             and pd.notna(mouth["huc12"]) else None),
+            "mouth_x": round(float(mouth_xy[0]), 1),
+            "mouth_y": round(float(mouth_xy[1]), 1),
             "name": None,
         }
         for col, out in (("stream_power_w_m", "stream_power_mean_w_m"),
@@ -528,6 +536,109 @@ def major_streams(segments, min_drainage_km2: float = 25.0):
                                 geometry="geometry", crs=seg.crs)
     out = gpd.GeoDataFrame(rows, geometry="geometry", crs=seg.crs)
     return out.sort_values("drainage_km2", ascending=False).reset_index(drop=True)
+
+
+def name_streams(streams, flowlines, within_m: float = 150.0,
+                 min_share: float = 0.5):
+    """Give the major streams their NHD names and the NHD's drainage at the
+    mouth. For each stream, the share of its length lying within
+    ``within_m`` of each GNIS-named flowline is measured -- with the
+    stream's mouth zone (twice ``within_m`` from the mouth) left out, so a
+    tributary does not take the river's name where it joins it -- and the
+    name covering the most is taken when it covers at least ``min_share``
+    (``name``, ``gnis_id``, ``name_share``; a stream the NHD names in two
+    parts keeps the longer name, the other in ``other_names``). The
+    flowline nearest the mouth (within ``within_m``) gives
+    ``nhd_totdasqkm`` (its total drainage area), ``nhd_streamorde`` and
+    ``nhd_qema_cfs``, and ``drainage_ratio`` is the traced drainage over
+    the NHD's: near 1 where the two agree, well under 1 where a river
+    enters from outside the project's HUC8s (its basin is not in the DEM).
+    Returns the layer."""
+    import geopandas as gpd
+    import pandas as pd
+    from shapely.geometry import Point
+
+    ms = _read(streams)
+    fl = _read(flowlines)
+    for col in ("name", "gnis_id", "name_share", "other_names", "nhd_totdasqkm",
+                "nhd_streamorde", "nhd_qema_cfs", "drainage_ratio"):
+        ms[col] = None
+    if len(ms) == 0 or len(fl) == 0:
+        return ms
+    if fl.crs != ms.crs:
+        fl = fl.to_crs(ms.crs)
+    fl = fl[fl.geometry.notna() & ~fl.geometry.is_empty].reset_index(drop=True)
+    fl.columns = [c.lower() for c in fl.columns]
+    named = fl[fl.get("gnis_name", pd.Series(dtype=object)).notna()] \
+        if "gnis_name" in fl.columns else fl.iloc[0:0]
+    named_idx = named.sindex if len(named) else None
+    all_idx = fl.sindex
+    names, ids, shares, others = [], [], [], []
+    tot, order, qema, ratio = [], [], [], []
+    have_mouth = {"mouth_x", "mouth_y"} <= set(ms.columns)
+    for row in ms.itertuples():
+        geom = row.geometry
+        if geom.geom_type == "MultiLineString":
+            ends = (geom.geoms[0].coords[0], geom.geoms[-1].coords[-1])
+        else:
+            ends = (geom.coords[0], geom.coords[-1])
+        if have_mouth and pd.notna(row.mouth_x) and pd.notna(row.mouth_y):
+            mouths = [Point(float(row.mouth_x), float(row.mouth_y))]
+        else:
+            mouths = [Point(e[:2]) for e in ends]
+        name = gid = other = None
+        share = None
+        if named_idx is not None:
+            # the stream without its mouth zone, where it meets what it
+            # joins; a short stream is measured whole
+            body = geom
+            if len(mouths) == 1 and geom.length > 4 * within_m:
+                body = geom.difference(mouths[0].buffer(2 * within_m))
+            length = float(body.length) or 1.0
+            hits = named.iloc[named_idx.query(body.buffer(within_m),
+                                              predicate="intersects")]
+            cover: dict[tuple[str, str], float] = {}
+            for h in hits.itertuples():
+                part = body.intersection(h.geometry.buffer(within_m))
+                if part.is_empty:
+                    continue
+                key = (str(h.gnis_name), str(getattr(h, "gnis_id", "") or ""))
+                cover[key] = cover.get(key, 0.0) + float(part.length)
+            if cover:
+                ranked = sorted(cover.items(), key=lambda kv: -kv[1])
+                (best, best_id), best_len = ranked[0]
+                sh = min(best_len / length, 1.0)
+                if sh >= min_share:
+                    name, gid, share = best, best_id or None, round(sh, 3)
+                    rest = [k[0] for k, v in ranked[1:]
+                            if v / length >= min_share / 2 and k[0] != best]
+                    other = "; ".join(rest) if rest else None
+        mouth = None
+        for p in mouths:
+            near = fl.iloc[all_idx.query(p.buffer(within_m), predicate="intersects")]
+            if len(near):
+                d = near.geometry.distance(p)
+                k = d.idxmin()
+                if d[k] <= within_m:
+                    f = near.loc[k]
+                    t = pd.to_numeric(f.get("totdasqkm"), errors="coerce")
+                    if mouth is None or (pd.notna(t) and (mouth[0] is None
+                                                          or t > mouth[0])):
+                        mouth = (float(t) if pd.notna(t) else None,
+                                 f.get("streamorde"), f.get("qema"))
+        names.append(name); ids.append(gid); shares.append(share); others.append(other)
+        if mouth:
+            tot.append(mouth[0])
+            order.append(int(mouth[1]) if pd.notna(mouth[1]) else None)
+            qema.append(round(float(mouth[2]), 1) if pd.notna(mouth[2]) else None)
+            ratio.append(round(float(row.drainage_km2) / mouth[0], 2)
+                         if mouth[0] else None)
+        else:
+            tot.append(None); order.append(None); qema.append(None); ratio.append(None)
+    ms["name"], ms["gnis_id"], ms["name_share"], ms["other_names"] = names, ids, shares, others
+    ms["nhd_totdasqkm"], ms["nhd_streamorde"] = tot, order
+    ms["nhd_qema_cfs"], ms["drainage_ratio"] = qema, ratio
+    return ms
 
 
 # -- the HUC12 sensitivity table ----------------------------------------------------------
@@ -682,7 +793,7 @@ def huc12_sensitivity(summary, weights: dict | str | Path | None = None,
 def synthesize(out_dir: str | Path, valley_types, curve="arid_sw_az",
                merged=None, summary_csv=None, hucs=None,
                min_drainage_km2: float = 25.0, weights=None,
-               cell_m: float | None = None) -> dict[str, Any]:
+               cell_m: float | None = None, flowlines=None) -> dict[str, Any]:
     """Stream power and stream ids on the reaches, the major streams layer
     and the HUC12 sensitivity table, written to ``out_dir``.
 
@@ -691,7 +802,8 @@ def synthesize(out_dir: str | Path, valley_types, curve="arid_sw_az",
     boundary that gets the new columns by ``seg_id`` and is rewritten (when
     None, ``valley_types`` itself is written as ``reaches_power.gpkg``).
     ``summary_csv`` is ``huc12_summary.csv``; ``hucs`` the HUC12 polygons
-    (for ``huc12_sensitivity.gpkg``)."""
+    (for ``huc12_sensitivity.gpkg``); ``flowlines`` the NHDPlus HR
+    flowlines (``wsdata.nhd_flowlines``) that name the major streams."""
     import geopandas as gpd
     import pandas as pd
 
@@ -728,6 +840,17 @@ def synthesize(out_dir: str | Path, valley_types, curve="arid_sw_az",
 
     note("synthesis: major streams")
     ms = major_streams(full, min_drainage_km2)
+    if flowlines is not None and Path(str(flowlines)).exists() and len(ms):
+        note("synthesis: naming the major streams from the NHD")
+        try:
+            ms = name_streams(ms, flowlines)
+            result["named"] = int(ms["name"].notna().sum())
+            r = pd.to_numeric(ms["drainage_ratio"], errors="coerce")
+            result["drainage_ratio_median"] = round(float(r.median()), 2) \
+                if r.notna().any() else None
+            result["entering_from_outside"] = int((r < 0.5).sum())
+        except Exception as exc:                             # noqa: BLE001
+            result["naming_failed"] = f"{type(exc).__name__}: {str(exc)[:200]}"
     ms_path = out_dir / "major_streams.gpkg"
     ms.to_file(str(ms_path), driver="GPKG", layer="major_streams")
     result["major_streams"] = str(ms_path)
@@ -738,7 +861,9 @@ def synthesize(out_dir: str | Path, valley_types, curve="arid_sw_az",
             {"stream_id": int(r.stream_id), "drainage_km2": float(r.drainage_km2),
              "length_km": float(r.length_km),
              "landscape_main": getattr(r, "landscape_main", None),
-             "huc12_mouth": getattr(r, "huc12_mouth", None)}
+             "huc12_mouth": getattr(r, "huc12_mouth", None),
+             "name": getattr(r, "name", None),
+             "nhd_totdasqkm": getattr(r, "nhd_totdasqkm", None)}
             for r in ms.head(10).itertuples()]
 
     power = huc12_power(inside)

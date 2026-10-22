@@ -485,7 +485,20 @@ def test_project_tool_passes_the_pilot_choice(tbx, tmp_path, monkeypatch):
     tool.execute(params, None)
     assert seen[-1][1]["data"] == "atlas14"
     names = [p.name for p in tool.getParameterInfo()]
-    assert {"out_summary", "out_ecosites", "out_fire"} <= set(names)
+    assert {"out_summary", "out_ecosites", "out_fire", "out_major",
+            "out_sensitivity"} <= set(names)
+    # The last step's knobs (v0.40) and the reconnaissance grid (v0.41):
+    # 10 m is the product's own and is passed as "not asked".
+    kw = seen[-1][1]
+    assert kw["major_streams_km2"] == 25.0 and kw["sensitivity_weights"] is None
+    assert kw["level_a_cell_m"] is None
+    tool, params, v = _tool(
+        tbx, "RunProject", out_folder=str(tmp_path), cell_a=30.0,
+        major_km2=100.0,
+        url="https://example.org/arcgis/rest/services/x/MapServer/3")
+    tool.execute(params, None)
+    assert seen[-1][1]["level_a_cell_m"] == 30.0
+    assert seen[-1][1]["major_streams_km2"] == 100.0
 
 
 def test_save_earthdata_login_tool(tbx, tmp_path, monkeypatch):

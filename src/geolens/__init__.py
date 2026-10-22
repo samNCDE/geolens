@@ -5,7 +5,7 @@ licence required, and Esri File Geodatabases are readable without ArcGIS
 installed. Runs on Windows, macOS and Linux.
 """
 
-__version__ = "0.40.0"
+__version__ = "0.41.0"
 
 from .safety import Guard, GeolensError, PathNotAllowed, ReadOnlyViolation  # noqa: F401
 

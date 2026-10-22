@@ -92,6 +92,33 @@ def test_fire_history_per_huc12(tmp_path):
     assert set(kept.columns) >= {"fire_year", "incident", "geometry"}
 
 
+def test_a_perimeter_that_make_valid_cuts_into_pieces_keeps_its_area(tmp_path):
+    """A self-touching perimeter comes back from make_valid as a collection
+    of polygons and lines; the Kingman run's fire step died on their union
+    ("Overlay input is mixed-dimension"). Only the area counts."""
+    from shapely.geometry import GeometryCollection, LineString, Polygon
+
+    h = _hucs()
+    bowtie = Polygon([(405000, 3905000), (410000, 3910000), (410000, 3905000),
+                      (405000, 3910000)])                  # self-intersecting
+    assert not bowtie.is_valid
+    sliver = GeometryCollection([box(401000, 3901000, 403000, 3903000),
+                                 LineString([(400000, 3900000), (401000, 3901000)])])
+    fires = gpd.GeoDataFrame(
+        {"FIRE_YEAR_INT": [2015, 2020], "INCIDENT": ["Bow", "Sliver"]},
+        geometry=[bowtie, sliver], crs=UTM).to_crs(4326)
+    r = wsdata.fire_history(h, tmp_path / "data",
+                            query=lambda *a, **k: fires)
+    t = r["table"]
+    assert r["perimeters"] == 2
+    # the bow tie's two triangles: 12.5 km2 of West Wash's 100
+    assert t.loc["150100000101", "fire_burned_share"] == pytest.approx(0.165, abs=0.01)
+    assert t.loc["150100000101", "fire_burned_share_2000"] == pytest.approx(0.165, abs=0.01)
+    assert t.loc["150100000101", "fire_count"] == 2
+    kept = gpd.read_file(r["path"])
+    assert set(kept.geom_type) <= {"Polygon", "MultiPolygon"}
+
+
 def test_no_fires_is_unburned_everywhere(tmp_path):
     empty = gpd.GeoDataFrame(geometry=[], crs=4326)
     r = wsdata.fire_history(_hucs(), tmp_path / "data", query=lambda *a, **k: empty)
@@ -458,3 +485,35 @@ def test_soil_shares_are_of_the_mapped_part(tmp_path):
 def test_the_steps_have_titles_and_sources():
     assert set(wsdata.TITLES) == set(wsdata.STEPS) == set(wsdata.SOURCES)
     assert "NIFC" in wsdata.SOURCES["fire"] and "Atlas 14" in wsdata.SOURCES["atlas14"]
+
+
+def test_nhd_flowlines_are_fetched_over_the_hucs_and_kept(tmp_path):
+    """Named flowlines, or ones draining at least the major-streams
+    threshold, over the HUC12s' envelope, columns lower-cased, written
+    once; an empty answer is no file, not an error."""
+    asked = {}
+
+    def query(url, where="1=1", fields="*", bbox=None, timeout=120, **k):
+        asked.update(url=url, where=where, fields=fields, bbox=bbox)
+        return gpd.GeoDataFrame(
+            {"GNIS_Name": ["Big Wash", None], "GNIS_ID": ["1", None],
+             "TotDASqKm": [300.0, 40.0], "StreamOrde": [5, 3],
+             "QAMA": [10.0, 1.0], "QEMA": [12.0, 1.2]},
+            geometry=[LineString([(-113.9, 35.2), (-113.8, 35.25)]),
+                      LineString([(-113.85, 35.21), (-113.84, 35.22)])],
+            crs="EPSG:4326")
+
+    r = wsdata.nhd_flowlines(_hucs(), tmp_path / "data", min_km2=25.0,
+                             query=query)
+    assert r["flowlines"] == 2 and r["named"] == 1
+    assert "MapServer/3" in asked["url"]
+    assert "gnis_name IS NOT NULL" in asked["where"] and "totdasqkm >= 25" in asked["where"]
+    assert asked["bbox"] is not None and -115 < asked["bbox"][0] < -112
+    g = gpd.read_file(r["path"])
+    assert {"gnis_name", "totdasqkm", "streamorde", "qema"} <= set(g.columns)
+    assert g.crs.to_epsg() == 4326
+
+    empty = wsdata.nhd_flowlines(
+        _hucs(), tmp_path / "data2", query=lambda *a, **k: gpd.GeoDataFrame(
+            geometry=[], crs="EPSG:4326"))
+    assert empty["path"] is None and empty["flowlines"] == 0
