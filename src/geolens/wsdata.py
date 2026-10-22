@@ -694,8 +694,12 @@ def huc12_summary(out_dir: Path, hucs, valley_types: str | None = None,
             t["stream_km"] = km.reindex(t.index).round(1)
             for col, prefix in (("confinement", "conf_"),):
                 if col in vt.columns:
+                    # fill_value: a HUC12 with reaches but none in a class
+                    # has a share of 0, not a blank; only a HUC12 with no
+                    # reaches at all stays blank.
                     sh = (vt.pivot_table(index="huc12", columns=col,
-                                         values="_km", aggfunc="sum")
+                                         values="_km", aggfunc="sum",
+                                         fill_value=0.0)
                           .div(km, axis=0))
                     for k in sh.columns:
                         t[f"{prefix}{str(k).replace(' ', '_')}_share"] = \
@@ -776,8 +780,11 @@ def huc12_summary(out_dir: Path, hucs, valley_types: str | None = None,
             for col, prefix in (("form_status", "form_"),
                                 (old, "form1996_")):
                 if col in stb.columns:
+                    # fill_value: 0 km of a form where level B ran and found
+                    # none; blank only where level B did not run.
                     p = stb.pivot_table(index="huc12", columns=col,
-                                        values="_km", aggfunc="sum")
+                                        values="_km", aggfunc="sum",
+                                        fill_value=0.0)
                     for k in p.columns:
                         t[f"{prefix}{k}_km"] = p[k].reindex(t.index).round(2)
 

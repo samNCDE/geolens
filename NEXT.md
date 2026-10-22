@@ -154,6 +154,27 @@ From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
 
+## v0.42.2 (beta): a share of nothing is 0, not blank
+
+The Kingman v38 HUC12 summary had 266 blank `conf_confined_share`
+cells, 13 blank partly-confined and 6 blank unconfined, and blanks in
+the `form_*_km` columns: a class a HUC12 has none of was left out of
+the pivot and came out as NaN, which reads as "no data" in a GIS table.
+`huc12_summary` now fills those with 0; a cell is blank only where
+there is nothing at all (no reaches; no level B). Test in test_wsdata.
+Nothing else changed, so a project already run keeps its table until
+the summary is rebuilt.
+
+What the 22 Oct morning taught: the computer crashed at 4:25 am AZ with
+both runs going (v38 had finished at 3:48 am; v42 was 72 of 273 into
+level B). Re-starting both from fresh ArcGIS Pro windows worked, but
+the v38 re-run (re-typing, NHD names, synthesis) left no trace: its
+window was gone by the afternoon and `project.json` was never touched,
+so it died or was closed during the NHD fetch, before the first save.
+The v42 run resumed cleanly (SSURGO answered: 23,150 km2 in 274 tiles;
+the v0.42.1 heal re-typed the valleys) and was 128 of 273 at 2:50 pm.
+Sam's call for the beta: no further runs, no more development.
+
 ## v0.42.1 (beta): soils that arrive after the pass re-type the valleys
 
 The night the v0.42 whole-office run started (21 Oct, 10:10 pm), USDA

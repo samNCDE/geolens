@@ -434,6 +434,10 @@ def test_the_huc12_summary_brings_everything_together(tmp_path):
     assert w["stream_km"] == 3.0 and e["stream_km"] == 3.0
     assert w["conf_unconfined_share"] == pytest.approx(2 / 3, abs=0.001)
     assert e["conf_partly_confined_share"] == pytest.approx(2 / 3, abs=0.001)
+    # A class a HUC12 has none of is 0, not blank (v0.42.2): the Kingman
+    # summary had 266 blank conf_confined_share cells.
+    assert w["conf_partly_confined_share"] == 0.0
+    assert e["conf_unconfined_share"] == 0.0
     assert w["valley_types_1996"] == "VIII 67%, II 33%"
     assert e["valley_types_2022"] == "U-AL-AF 67%, C-BR-CB 33%"
     assert w["alluvial_landscape_share"] == pytest.approx(2 / 3, abs=0.001)

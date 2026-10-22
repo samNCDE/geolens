@@ -11,7 +11,7 @@ all that is needed to fix it.
 
 | # | Tool | Settings | Expect |
 |---|---|---|---|
-| 1 | 0 Setup ▸ Find the geolens environment | (none) | "geolens 0.42.1 found" |
+| 1 | 0 Setup ▸ Find the geolens environment | (none) | "geolens 0.42.2 found" |
 | 2 | 0 Setup ▸ Check memory before a run | DEM = Eagle Creek | "FITS comfortably", about 10 GB |
 | 3 | 2 Steps ▸ 1. Terrain, valley bottom and confinement | DEM; output folder `v30_test` | A few minutes. *Valley bottom* and *Reaches (confinement)* added, coloured. |
 | 4 | 2 Steps ▸ 1b. Calibrate confinement breaks | Run folder `v30_test`, breaks blank | A percentile table and five candidate splits in the messages. No layers. |
