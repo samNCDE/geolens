@@ -340,6 +340,46 @@ def _trace_skeleton(skel: np.ndarray) -> list[list[tuple[int, int]]]:
     return paths
 
 
+def _split_over_divides(paths, dem, vpu: float, min_rise_m: float = 10.0,
+                        margin: int = 3) -> tuple[list, int]:
+    """Split every path whose highest cell is an interior one that stands
+    more than ``min_rise_m`` above both ends (the filled DEM never rises
+    along a stream, so such a path crosses a divide). Returns the paths and
+    how many were split. ``vpu`` is metres per vertical unit."""
+    out, split = [], 0
+    for p in paths:
+        if len(p) < 2 * margin + 1:
+            out.append(p)
+            continue
+        z = np.array([dem[r, c] for r, c in p], dtype="float64") * vpu
+        if not np.isfinite(z).all():
+            out.append(p)
+            continue
+        i = int(np.argmax(z[margin:-margin])) + margin
+        if z[i] - z[0] > min_rise_m and z[i] - z[-1] > min_rise_m:
+            out.append(p[: i + 1])
+            out.append(p[i:])
+            split += 1
+        else:
+            out.append(p)
+    return out, split
+
+
+def _accumulation_at(accumulation: str | None, cells) -> list[float] | None:
+    """Flow accumulation at (row, col) cells, read from the raster in one
+    go; None when there is no raster to read."""
+    if not accumulation or not cells:
+        return None
+    import rasterio
+
+    try:
+        with rasterio.open(accumulation) as src:
+            xy = [src.xy(r, c) for r, c in cells]
+            return [float(v[0]) for v in src.sample(xy)]
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
 def _absorb_short_connectors(paths, min_px: int, accumulation: str | None,
                              shape) -> tuple[list, int]:
     """Join every path shorter than ``min_px`` that runs between two
@@ -521,6 +561,10 @@ def extract_network(
     n0 = len(paths)
     paths, joined, sides = _absorb_short_connectors(
         paths, min_px, terrain.accumulation, skel.shape)
+    # A path that climbs over a divide -- two headwaters whose stream cells
+    # touch across it, so the skeleton runs up one and down the other --
+    # is two streams, split at the top.
+    paths, split = _split_over_divides(paths, dem, vpu, min_rise_m=10.0)
     ends: dict[tuple[int, int], int] = {}
     for p in paths:
         for q in (p[0], p[-1]):
@@ -532,8 +576,48 @@ def extract_network(
     paths = [p for p in paths if len(p) >= min_px or not _spur(p)]
     note(f"{len(paths):,} branches after joining {joined:,} short connecting "
          f"paths onto their neighbours, dropping {sides:,} short sides of "
-         f"loops and {n1 - len(paths):,} spurs under {min_branch_m:g} m "
-         f"(traced {n0:,})")
+         f"loops, splitting {split:,} over a divide and dropping "
+         f"{n1 - len(paths):,} spurs under {min_branch_m:g} m (traced {n0:,})")
+
+    # Every branch drawn downstream. The skeleton walk starts wherever it
+    # starts, so until v0.42 half the reaches ran uphill (42% on Ruidoso,
+    # half on Kingman), and every long profile, headcut direction and
+    # stream trace had to work out which way the water goes. The filled
+    # DEM never rises along a stream, so a branch whose last cell stands
+    # higher than its first is turned round; a flat one (under 0.5 m of
+    # fall either way: a filled pit, or a short stub) goes by the
+    # accumulation along it, the downstream half carrying more. The
+    # skeleton wanders on and off the channel cells, so single cells are
+    # not compared, medians of the two halves are.
+    flipped = 0
+    if paths:
+        flats: list[int] = []
+        for i, p in enumerate(paths):
+            z0, z1 = float(dem[p[0]]) * vpu, float(dem[p[-1]]) * vpu
+            if np.isfinite(z0) and np.isfinite(z1) and abs(z1 - z0) > 0.5:
+                if z1 > z0:
+                    paths[i] = p[::-1]
+                    flipped += 1
+            elif len(p) >= 2:
+                flats.append(i)
+        # Only the flat branches need the accumulation raster, read once
+        # for their cells (the whole skeleton would be millions of points
+        # on a field office).
+        if flats:
+            flow = _accumulation_at(terrain.accumulation,
+                                    [c for i in flats for c in paths[i]])
+            pos = 0
+            for i in flats:
+                p = paths[i]
+                if flow is not None:
+                    a = np.array(flow[pos:pos + len(p)])
+                    half = len(a) // 2
+                    if float(np.median(a[:half])) > float(np.median(a[-half:])):
+                        paths[i] = p[::-1]
+                        flipped += 1
+                pos += len(p)
+        note(f"{flipped:,} branches reversed to run downstream "
+             f"({len(flats):,} flat ones by their accumulation)")
 
     from rasterio.transform import xy as _rc_to_xy
 
@@ -581,9 +665,11 @@ def extract_network(
         raise GeolensError("Network traced but no segments produced.")
 
     gdf = gpd.GeoDataFrame(records, crs=crs)
-    # Gradient is signed by trace direction, which may run upstream. Use the
-    # magnitude — direction is recovered from accumulation if ever needed.
+    # Branches run downstream from v0.42 (above), so drop_m is the fall and
+    # gradient its magnitude; a flat branch that could not be oriented, or
+    # a filled flat, can still give a drop of zero or a hair negative.
     gdf["gradient"] = gdf["gradient"].abs()
+    gdf["flow_oriented"] = True
 
     # --- segment id raster, for nearest-segment allocation -------------------
     note("rasterizing segment ids")

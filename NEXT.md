@@ -5,7 +5,7 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 21 Oct 2026 session)
 
-**State.** v0.41.0 beta. The full test suite passes on Linux with numba
+**State.** v0.42.0 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
 The release is unzipped at `S:\geolens\gl33` (the folder name stayed; the
 changed files of each release are committed into it, never while a run
@@ -34,10 +34,23 @@ v0.30.0 to v0.37.1) are in `S:\geolens\Claude outputs`.
   weights are a proposal for him to change.
 - Done since: the methods write-up (v0.40, `docs/`), the reconnaissance
   option, the GitHub workflow and the NHD names on the major streams
-  (v0.41; the workflow and the NHD fetch untested live). Next: the
-  piedmont-surface fan test;
+  (v0.41; the workflow and the NHD fetch untested live); every reach
+  drawn downstream (v0.42). Next: the piedmont-surface fan test;
   the step list (StreamStats, USNVC/LANDFIRE, hydrography, the portable
   drive test).
+- **The morning procedure (prepared 21 Oct, 5:25 pm):** when the v38 run
+  has finished (expected about 6:30-7 am Arizona): (1) stage project.json,
+  RESULTS.md and the merged layers, `review_kingman.py <staged root>`,
+  report; (2) put v0.41.0 into gl33: the 31 files that changed since
+  v0.38.1 are staged under `/mnt/user-data/outputs/gl41/` (in this
+  container) with the commit call written out in the scratchpad's
+  `gl33_commit.json` (device_commit_files, 31 entries into
+  `S:\geolens\gl33\...`); without the container, unzip
+  `geolens_v0.41.0-beta.zip` over gl33; (3) run the project tool once more
+  on `geolens_v38` (same settings; it re-types under TYPING 3, retries the
+  fire step, fetches the NHD flowlines, and adds stream power,
+  `major_streams` with names and `huc12_sensitivity`: 15-30 min); (4) if
+  before 8 am, start the whole-office run into `S:\kingman\geolens_v40`.
 - **Sam, 21 Oct, 4:10 pm:** if the v0.38.1 run finishes before 8 am
   Arizona on 22 Oct, put v0.40.0 into gl33 and run the latest version on
   the whole field office into a new folder (`S:\kingman\geolens_v40`,
@@ -140,6 +153,24 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.42.0 (beta): every reach drawn downstream
+
+Step 9 of the step list ("42% are digitised uphill; profiles and headcut
+direction need the right way round"). `extract_network` now turns every
+traced branch to run downstream: the filled DEM never rises along a
+stream, so a branch whose last cell stands higher than its first is
+reversed; a flat one (under 0.5 m either way) goes by the accumulation
+along it, medians of the two halves (single cells mislead: the skeleton
+wanders on and off the channel cells, and the junction cell at an end
+carries whichever path's water). A path that climbs more than 10 m over
+an interior high point crosses a divide (two headwaters whose stream
+cells touch) and is split there. On the 30 m test landscape (476
+branches): 3 still rise, by under 0.5 m, and no reach falls more than
+10 m the wrong way. `drop_m` is now the fall; `flow_oriented` is on the
+layer. A layer traced earlier (the Kingman runs) is turned round by the
+synthesis step instead, lines and fall columns together, `flow_reversed`
+recording which; the merged valley types come out downstream either way.
 
 ## v0.41.0 (beta): reconnaissance runs; the major streams named from the NHD
 

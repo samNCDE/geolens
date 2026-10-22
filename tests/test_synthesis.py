@@ -69,6 +69,10 @@ def test_the_main_stem_is_one_stream_and_the_tributaries_their_own():
     assert s.loc[0, "dist_to_mouth_km"] == pytest.approx(1.0, abs=0.01)
     assert s.loc[9, "stream_id"] == trunk and s.loc[9, "dist_to_mouth_km"] == 1.5
     assert bool(s.loc[2, "flow_reversed"]) and not bool(s.loc[1, "flow_reversed"])
+    # ... and the uphill line is turned round, its fall with it
+    assert list(s.loc[2, "geometry"].coords) == [(1000.0, 0.0), (1500.0, 0.0)]
+    assert s.loc[2, "z_start"] == 90.0 and s.loc[2, "z_end"] == 85.0
+    assert s.loc[2, "drop_m"] == 5.0 and bool(s.loc[2, "flow_oriented"])
     # A, B, C and D are tributaries of the trunk; D1 is on D's stream.
     for k in (3, 4, 5, 6):
         assert s.loc[k, "stream_id"] != trunk
@@ -256,6 +260,10 @@ def test_synthesize_writes_the_layers_and_the_weights(tmp_path):
     back = gpd.read_file(clipped)
     assert "stream_id" in back.columns and "unit_stream_power_w_m2" in back.columns
     assert len(back) == 9, "the clipped layer keeps its rows"
+    t2 = back.set_index("seg_id").loc[2]
+    assert list(t2.geometry.coords) == [(1000.0, 0.0), (1500.0, 0.0)], \
+        "the merged layer's lines run downstream too"
+    assert t2["drop_m"] == 5.0
     assert r["largest"][0]["drainage_km2"] == 100.0
     # two HUC12s cannot be ranked against each other: said, not failed
     assert "fewer than 3" in r["sensitivity"]["skipped"]

@@ -40,6 +40,15 @@ def run(tmp_path_factory):
     # A coarse network: the default one has ~600 reaches, 3,000 sections.
     t = build_terrain(str(DEM), stream_threshold_km2=3.0, out_prefix="sp_t")
     n = extract_network(t, segment_length_m=800.0, out_prefix="sp_n")
+    # The 30 m fixture cannot show a real channel's banks, so give every
+    # reach a channel the grid can see (100 m, over three cells): the
+    # regional stage then measures a bankfull on most sections, which is
+    # what the plots draw. (Until v0.42 the test leaned on one section of
+    # 680 where the bank picker found something by accident.)
+    import geopandas as gpd
+    segs = gpd.read_file(n.segments)
+    segs["channel_width_m"] = 100.0
+    segs.to_file(n.segments, driver="GPKG")
     from geolens.landscape import section_plots as sp
     real = sp.plot_stream_sections
 
@@ -138,9 +147,17 @@ def test_an_earlier_output_folder_gets_the_same_pictures(run, tmp_path):
                zip(after["plot_path"], after["seg_id"]) if s_ in two)
     assert "plot_path" in _read(old / "stream_types.gpkg", "stream_types")
 
-    # The derived stages match the recorded ones on measured sections.
+    # The derived stages match the recorded ones on measured sections. A
+    # stage the regional method lowered to keep the width plausible
+    # (stage_capped, v0.28) is not the regional depth above the thalweg,
+    # and no v0.25 folder has one: those are left out.
     prof = pd.read_csv(old / "stream_type_profiles.csv").dropna()
-    for _, t in truth[truth["status"] == "bankfull"].iterrows():
+    capped = truth.get("stage_capped")
+    plain = truth[(truth["status"] == "bankfull")
+                  & ~(capped.fillna(False).astype(bool) if capped is not None
+                      else False)]
+    assert len(plain) > 0
+    for _, t in plain.iterrows():
         p = prof[prof["xs_id"] == t["xs_id"]].sort_values("offset_m")
         r = {k: v for k, v in t.items() if k not in new_cols}
         _derive_stages(p["offset_m"].to_numpy(float),

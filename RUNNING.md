@@ -1339,9 +1339,14 @@ its mouth. From every outlet the main stem is followed upstream, taking
 the larger drainage at each junction, and each tributary numbered in
 turn: `stream_id` (1 is the biggest outlet's stream), `dist_to_mouth_km`
 along the stream to the reach's downstream end, `flows_into` (the
-receiving stream) and `stream_km2_at_mouth`. Half the reaches are drawn
-uphill (`flow_reversed`); the flow direction comes from the fall along
-each branch on the filled DEM. The traced network has gaps (before v0.40
+receiving stream) and `stream_km2_at_mouth`. Every line comes out
+running downstream: from v0.42 the network is traced that way (the fall
+along each branch on the filled DEM, the accumulation deciding on a flat;
+`flow_oriented` on the layer; a path that climbs over a divide — two
+headwaters whose stream cells touch across it — is split at the top into
+two streams), and a layer traced earlier, where half the reaches were
+drawn uphill, is turned round here, its `z_start`, `z_end` and `drop_m`
+with it, `flow_reversed` recording which lines were. The traced network has gaps (before v0.40
 the tracer dropped short connecting paths as if they were spurs; a wide
 wash's skeleton grows side loops that leave many), so a reach whose
 downstream end meets no reach at a node joins the reach whose line passes

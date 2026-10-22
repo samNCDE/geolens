@@ -431,7 +431,29 @@ def trace_streams(segments, cell_m: float | None = None, snap_cells: float = 2.0
     seg["drainage_km2_used"] = np.round(used, 4)
     seg["drainage_inherited"] = inherited
     seg["parallel_thread"] = parallel
-    seg["flow_reversed"] = ~die          # the line was digitised uphill
+    # Every line turned to run downstream (v0.42 traces them so; older
+    # layers are turned here): flow_reversed records which were, and the
+    # fall columns follow the line.
+    rev = ~die
+    if rev.any():
+        def _turn(g):
+            if g.geom_type == "MultiLineString":
+                from shapely.geometry import MultiLineString
+                return MultiLineString([p.reverse() for p in g.geoms][::-1])
+            return g.reverse()
+
+        geom = seg.geometry.copy()
+        geom[rev] = seg.geometry[rev].apply(_turn)
+        seg = seg.set_geometry(geom)
+        if {"z_start", "z_end"} <= set(seg.columns):
+            z0 = seg.loc[rev, "z_start"].copy()
+            seg.loc[rev, "z_start"] = seg.loc[rev, "z_end"].to_numpy()
+            seg.loc[rev, "z_end"] = z0.to_numpy()
+        if "drop_m" in seg.columns:
+            seg.loc[rev, "drop_m"] = -pd.to_numeric(seg.loc[rev, "drop_m"],
+                                                   errors="coerce")
+    seg["flow_reversed"] = rev           # drawn uphill; turned round here
+    seg["flow_oriented"] = True
     info = {"streams": int(sid), "outlets": int(len(outlets)),
             "joined_at_node": int((kind == 1).sum()),
             "joined_on_line": int((kind == 2).sum()),
@@ -481,7 +503,12 @@ def major_streams(segments, min_drainage_km2: float = 25.0):
             ends = (mg.geoms[0].coords[0], mg.geoms[-1].coords[-1])
         else:
             ends = (mg.coords[0], mg.coords[-1])
-        mouth_xy = ends[0] if bool(mouth.get("flow_reversed", False)) else ends[1]
+        # Lines run downstream once traced here (flow_oriented); a layer
+        # labelled by an older trace keeps its drawn direction, which
+        # flow_reversed records.
+        drawn_uphill = (bool(mouth.get("flow_reversed", False))
+                        and not bool(mouth.get("flow_oriented", False)))
+        mouth_xy = ends[0] if drawn_uphill else ends[1]
         geom = unary_union(list(g.geometry))
         if geom.geom_type == "MultiLineString":
             geom = linemerge(geom)
@@ -819,14 +846,25 @@ def synthesize(out_dir: str | Path, valley_types, curve="arid_sw_az",
     result["power_basis"] = str(full["power_basis"].iloc[0]) if len(full) else ""
     new_cols = ["stream_id", "dist_to_mouth_km", "flows_into",
                 "stream_km2_at_mouth", "drainage_km2_used", "drainage_inherited",
-                "parallel_thread", "flow_reversed", "q_bankfull_m3s",
-                "stream_power_w_m", "unit_stream_power_w_m2", "power_basis"]
+                "parallel_thread", "flow_reversed", "flow_oriented",
+                "q_bankfull_m3s", "stream_power_w_m", "unit_stream_power_w_m2",
+                "power_basis"]
 
     if merged is not None:
         m = _read(merged)
         m = m.drop(columns=[c for c in new_cols if c in m.columns])
         m = m.merge(full[["seg_id", *new_cols]], on="seg_id", how="left")
         m = gpd.GeoDataFrame(m, geometry="geometry", crs=full.crs)
+        # the lines turned downstream, with their fall columns
+        turned = full.set_index("seg_id")
+        on = m["seg_id"].isin(turned.index[turned["flow_reversed"].fillna(False)
+                                           .astype(bool)])
+        if on.any():
+            keys = m.loc[on, "seg_id"]
+            m.loc[on, "geometry"] = turned.loc[keys, "geometry"].to_numpy()
+            for col in ("z_start", "z_end", "drop_m"):
+                if col in m.columns and col in turned.columns:
+                    m.loc[on, col] = turned.loc[keys, col].to_numpy()
         path = Path(merged) if isinstance(merged, (str, Path)) \
             else out_dir / "valley_types.gpkg"
         m.to_file(str(path), driver="GPKG", layer="valley_types")
