@@ -743,3 +743,62 @@ def test_a_reconnaissance_run_asks_for_a_coarser_level_a(stubs, tmp_path):
     assert stubs["res"][-1] == 30.0
     report = (out / "RESULTS.md").read_text()
     assert "asked for at 30 m" in report and "narrower than 90 m" in report
+
+
+def test_soils_that_arrive_after_the_pass_retype_the_valleys(stubs, tmp_path,
+                                                             monkeypatch):
+    """Soil Data Access was down the night the v0.42 Kingman run started:
+    the pass typed its valleys without SSURGO. The next run, with the
+    soils fetched, re-types them from the saved valley form instead of
+    redoing the two-hour pass."""
+    calls = {"soils": 0, "passes": 0}
+
+    def fetch_soils(aoi, guard=None, max_area_km2=None, **k):
+        calls["soils"] += 1
+        if calls["soils"] == 1:
+            raise GeolensError("Could not get an answer from USDA Soil Data "
+                               "Access: JSONDecodeError")
+        out = Path(guard.out_dir) / "soils_dir"
+        out.mkdir(parents=True, exist_ok=True)
+        p = out / "soils.gpkg"
+        gpd.GeoDataFrame(
+            {"mukey": [1], "material_class": ["alluvial"],
+             "pmkind": ["alluvium"], "hydgrpdcd": ["B"], "kwfact": [0.2]},
+            geometry=[box(380000, 4480000, 450000, 4540000)],
+            crs=UTM).to_file(p, driver="GPKG", layer="soils")
+        return {"soils": str(p), "polygons": 1,
+                "km2_by_material": {"alluvial": 4200.0}}
+
+    def no_geology(*a, **k):
+        raise GeolensError("USGS geology service down too")
+
+    monkeypatch.setattr("geolens.soils.fetch_soils", fetch_soils)
+    monkeypatch.setattr("geolens.geology.fetch_geology", no_geology)
+    real_pass = api.landscape_pass
+
+    def counted_pass(*a, **k):
+        calls["passes"] += 1
+        return real_pass(*a, **k)
+
+    monkeypatch.setattr(api, "landscape_pass", counted_pass)
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["ranch"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    out = tmp_path / "proj"
+    kw = dict(level_b="none", soils=False, stream_threshold_km2=3.0,
+              section_plots=False, data="none")
+    project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    status = json.loads((out / "project.json").read_text())
+    assert "soils" not in status["steps"] and calls["passes"] == 1
+    assert status["steps"]["pass_a"]["geology"] is None
+    assert any("USGS geology, not SSURGO" in w for w in status["warnings"])
+
+    res = project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    status = json.loads((out / "project.json").read_text())
+    assert calls["soils"] == 2 and calls["passes"] == 1, "no second pass"
+    assert status["steps"]["pass_a"]["geology"] == status["steps"]["soils"]["path"]
+    assert status["steps"]["pass_a"]["typing"] == project.TYPING
+    assert not any("USGS geology, not SSURGO" in w for w in status["warnings"])
+    vt = gpd.read_file(res["valley_types"])
+    assert (vt["material_class"] == "alluvial").any()

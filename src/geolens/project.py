@@ -1182,6 +1182,19 @@ def run_project(boundary: str, where: str | None = None,
                 slope=(res.get("terrain") or {}).get("slope"),
                 typing=TYPING, seconds=res.get("seconds"))
     pa = st.step("pass_a")
+    # Soils that arrived after the pass (Soil Data Access was down the
+    # night the v0.42 Kingman run started, and the pass typed its valleys
+    # from USGS geology): the valleys are re-typed from the saved valley
+    # form with the soils, in minutes, instead of the pass being redone.
+    soils_path = (st.step("soils") or {}).get("path")
+    if (use_soils and soils_path and pa.get("valley_types")
+            and pa.get("geology") != soils_path):
+        note("project: SSURGO soils arrived after the level A pass; "
+             "re-typing the valleys with them")
+        pa = dict(pa, geology=soils_path, typing=0)
+        st.data["steps"]["pass_a"] = pa
+        st.unwarn("Valley materials come from USGS geology, not SSURGO")
+        st.save()
     if (pa.get("typing") or 1) < TYPING and pa.get("valley_types"):
         try:
             pa = _retype_valleys(root, A, st, pa)

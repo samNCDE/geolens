@@ -5,7 +5,7 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state at the end of the 21 Oct 2026 session)
 
-**State.** v0.42.0 beta. The full test suite passes on Linux with numba
+**State.** v0.42.1 beta. The full test suite passes on Linux with numba
 0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
 The release is unzipped at `S:\geolens\gl33` (the folder name stayed; the
 changed files of each release are committed into it, never while a run
@@ -41,12 +41,12 @@ v0.30.0 to v0.37.1) are in `S:\geolens\Claude outputs`.
 - **The morning procedure (prepared 21 Oct, 5:25 pm):** when the v38 run
   has finished (expected about 6:30-7 am Arizona): (1) stage project.json,
   RESULTS.md and the merged layers, `review_kingman.py <staged root>`,
-  report; (2) put v0.41.0 into gl33: the 31 files that changed since
+  report; (2) put v0.42.0 into gl33: the 32 files that changed since
   v0.38.1 are staged under `/mnt/user-data/outputs/gl41/` (in this
   container) with the commit call written out in the scratchpad's
-  `gl33_commit.json` (device_commit_files, 31 entries into
+  `gl33_commit.json` (device_commit_files, 32 entries into
   `S:\geolens\gl33\...`); without the container, unzip
-  `geolens_v0.41.0-beta.zip` over gl33; (3) run the project tool once more
+  `geolens_v0.42.0-beta.zip` over gl33; (3) run the project tool once more
   on `geolens_v38` (same settings; it re-types under TYPING 3, retries the
   fire step, fetches the NHD flowlines, and adds stream power,
   `major_streams` with names and `huc12_sensitivity`: 15-30 min); (4) if
@@ -153,6 +153,24 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.42.1 (beta): soils that arrive after the pass re-type the valleys
+
+The night the v0.42 whole-office run started (21 Oct, 10:10 pm), USDA
+Soil Data Access would not answer, so the run fell back to USGS geology
+for the valley materials and carried on (the NHD fetch, new in v0.41,
+worked live: 29,728 flowlines, 17,358 named, in 23 minutes). A project
+whose pass was typed without SSURGO now re-types its valleys from the
+saved valley form the next time the soils are fetched (`pass_a.geology`
+set to the soils, `typing` reset, the USGS warning withdrawn), in
+minutes, instead of the two-hour pass being redone; test in
+test_project. The run itself: re-run the tool on `geolens_v42` with
+v0.42.1 in gl42 once SSURGO answers.
+
+Also that night: the second ArcGIS Pro window ran the gl42 toolbox (a
+fresh folder `S:\geolens\gl42` written file by file; the toolbox runs
+the geolens beside it, so gl33 stayed v0.38.1 for the v38 run), and the
+link to the computer dropped at 11 pm for the rest of the night.
 
 ## v0.42.0 (beta): every reach drawn downstream
 
