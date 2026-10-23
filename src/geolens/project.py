@@ -990,6 +990,7 @@ def run_project(boundary: str, where: str | None = None,
                 fine_huc12s: str | list | None = None,
                 fine_count: int = 3,
                 fine_cell_m: float = 3.0,
+                fine_workers: int | None = None,
                 copy_from: str | None = None,
                 timeout: int = 120,
                 guard: Guard | None = None) -> dict[str, Any]:
@@ -1013,7 +1014,9 @@ def run_project(boundary: str, where: str | None = None,
     1/3 arc-second DEM's own; 20 or 30 m for a reconnaissance run on a
     laptop or a cloud runner, where the DEM is fetched straight onto the
     coarser grid; valleys narrower than three cells are not resolved).
-    ``fine_valleys``: "none" (default), "pilot" (``fine_count`` headwater
+    ``fine_valleys``: "none" (default), "all" (every HUC12 with lidar, the
+    pilot first, ``fine_workers`` at a time, by default as many as memory
+    and cores allow; the 1 m DEMs kept when ``keep_lidar_dem``), "pilot" (``fine_count`` headwater
     HUC12s with lidar, one per setting: mountain, fans and piedmonts,
     alluvial valley) or "listed" (``fine_huc12s``): level A's valley pass
     again on those HUC12s' lidar at ``fine_cell_m`` (3 m), compared with
@@ -1033,6 +1036,7 @@ def run_project(boundary: str, where: str | None = None,
     guard = guard or Guard.from_env()
     root = Path(guard.out_dir)
     root.mkdir(parents=True, exist_ok=True)
+    _take_lock(root)
     if copy_from and not (root / "project.json").exists():
         copy_project(guard.read_path(copy_from), root)
     elif copy_from:
@@ -1040,6 +1044,7 @@ def run_project(boundary: str, where: str | None = None,
              f"it (the folder to start from, {copy_from}, is not used)")
     st = _Status(root)
     t0 = time.monotonic()
+    _keep_awake()
     from . import api
 
     # 0. boundary -----------------------------------------------------------------
@@ -1354,12 +1359,14 @@ def run_project(boundary: str, where: str | None = None,
     # 8b. valleys on the lidar at a finer cell, HUC12 by HUC12 (a pilot) -----------------------
     fine_merged: dict[str, str] = {}
     fmode = (fine_valleys or "none").lower()
-    if fmode in ("pilot", "listed"):
+    if fmode in ("pilot", "listed", "all"):
         try:
             fine_merged = _fine_valleys(
                 root, st, hucs, pa, dem_run, fmode, fine_huc12s,
                 int(fine_count), float(fine_cell_m), stream_threshold_km2,
-                keep_tiles=keep_lidar_tiles)
+                keep_tiles=keep_lidar_tiles,
+                keep_1m=bool(keep_lidar_dem) if keep_lidar_dem is not None
+                else fmode != "all", workers=fine_workers)
             st.unwarn(f"The {float(fine_cell_m):g} m valley pass failed")
         except Exception as exc:                             # noqa: BLE001
             st.warn(f"The {float(fine_cell_m):g} m valley pass failed "
@@ -1506,6 +1513,83 @@ def _level_b(code, row, root: Path, dem_a: str, pa: dict, curve,
 COPY_SKIP_DIRS = {"dem_tiles", ".geolens_cache", "__pycache__", "runs",
                   "section_plots", "reach_plots"}
 COPY_SKIP_TOP = {"merged", "review", "A_fine"}
+
+
+def _pid_alive(pid: int) -> bool:
+    """Whether a process is running, without signalling it (os.kill on
+    Windows terminates the process whatever the signal)."""
+    if pid <= 0:
+        return False
+    try:
+        import psutil  # type: ignore
+
+        return bool(psutil.pid_exists(pid))
+    except ImportError:
+        pass
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            k = ctypes.windll.kernel32
+            h = k.OpenProcess(0x1000, False, pid)    # QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            code = ctypes.c_ulong()
+            ok = k.GetExitCodeProcess(h, ctypes.byref(code))
+            k.CloseHandle(h)
+            return bool(ok) and code.value == 259     # STILL_ACTIVE
+        except Exception:                                    # noqa: BLE001
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _take_lock(root: Path) -> None:
+    """One run per project folder: a second one started while the first
+    still runs (a double-click twice, the toolbox and a .bat) would write
+    the same project.json. A lock left by a run that died is taken over."""
+    lock = root / "run.lock"
+    try:
+        pid = int(lock.read_text(encoding="utf-8").split()[0])
+    except (OSError, ValueError, IndexError):
+        pid = 0
+    if pid and pid != os.getpid() and _pid_alive(pid):
+        raise GeolensError(
+            f"Another geolens run (process {pid}) is working in {root}. "
+            f"Let it finish, or close it, before starting this folder again.")
+    lock.write_text(f"{os.getpid()} {_now()}\n", encoding="utf-8")
+
+    def release():
+        try:
+            if lock.read_text(encoding="utf-8").split()[0] == str(os.getpid()):
+                lock.unlink()
+        except (OSError, IndexError):
+            pass
+
+    import atexit
+
+    atexit.register(release)
+
+
+def _keep_awake() -> None:
+    """Ask Windows not to sleep while this process runs (the screen may
+    still turn off); cleared when it ends. A multi-day run otherwise stops
+    whenever the PC goes to sleep."""
+    if os.name != "nt":
+        return
+    try:
+        import atexit
+        import ctypes
+
+        es_continuous, es_system_required = 0x80000000, 0x00000001
+        k = ctypes.windll.kernel32
+        k.SetThreadExecutionState(es_continuous | es_system_required)
+        atexit.register(lambda: k.SetThreadExecutionState(es_continuous))
+    except Exception:                                        # noqa: BLE001
+        pass
 
 
 def _moved_paths(obj, src: Path, root: Path):
@@ -1742,63 +1826,276 @@ def _compare_valleys(coarse_vt: str, fine_vt: str, poly, cell_coarse: float,
     return out
 
 
-def _fine_valley_huc12(code: str, hucs, root: Path, dem_a: str, pa: dict,
+def _inflow_correct(tile, coarse, breaks, exp: float = 0.35,
+                    max_dist_m: float = 40.0, max_angle: float = 35.0,
+                    min_factor: float = 1.5, min_gain_km2: float = 5.0):
+    """A HUC12 tile only routes the drainage inside it, so a main stem
+    entering from upstream starts with a fraction of its real drainage, a
+    channel width to match and too wide a confinement ratio. Where a tile
+    reach lies along a 10 m reach (midpoint within ``max_dist_m``, running
+    the same way within ``max_angle`` degrees) that drains much more
+    (``min_factor`` times and ``min_gain_km2`` more), it takes the 10 m
+    drainage; the channel width scales as A**``exp`` (classify's relation),
+    the ratio by the inverse, and the class follows with ``breaks``.
+    Returns the corrected layer and how many reaches changed."""
+    import geopandas as gpd
+    import numpy as np
+    import pandas as pd
+
+    from .landscape.classify import (_confinement_class, _gradient_class,
+                                     _rosgen_candidates)
+
+    t = tile.copy()
+    t["drainage_from_10m"] = False
+    if t.empty or coarse.empty or "drainage_km2" not in coarse.columns:
+        return t, 0
+    c = coarse[["drainage_km2", "geometry"]].to_crs(t.crs).reset_index(drop=True)
+    mid = gpd.GeoDataFrame({"_i": np.arange(len(t))},
+                           geometry=t.geometry.interpolate(0.5, normalized=True),
+                           crs=t.crs)
+    j = gpd.sjoin_nearest(mid, c, how="left", max_distance=max_dist_m,
+                          distance_col="_d")
+    j = j[~j["_i"].duplicated()].set_index("_i")
+
+    def bearing(g):
+        try:
+            xy = np.asarray(g.coords) if g.geom_type == "LineString" else \
+                np.asarray(list(g.geoms)[0].coords)
+            dx, dy = xy[-1][0] - xy[0][0], xy[-1][1] - xy[0][1]
+            return float(np.degrees(np.arctan2(dy, dx)))
+        except Exception:                                    # noqa: BLE001
+            return np.nan
+
+    a_t = pd.to_numeric(t["drainage_km2"], errors="coerce").to_numpy("float64")
+    a_c = pd.to_numeric(j["drainage_km2"], errors="coerce").reindex(
+        np.arange(len(t))).to_numpy("float64")
+    idx = j["index_right"].reindex(np.arange(len(t)))
+    b_t = np.array([bearing(g) for g in t.geometry])
+    b_c = np.array([bearing(c.geometry.iloc[int(k)]) if pd.notna(k) else np.nan
+                    for k in idx])
+    diff = np.abs(((b_t - b_c + 90.0) % 180.0) - 90.0)   # undirected, 0..90
+    ok = (np.isfinite(a_c) & np.isfinite(a_t) & (diff <= max_angle)
+          & (a_c > min_factor * np.maximum(a_t, 1e-6))
+          & (a_c - a_t >= min_gain_km2))
+    n = int(ok.sum())
+    if not n:
+        return t, 0
+    scale = np.ones(len(t))
+    scale[ok] = (np.maximum(a_t[ok], 1e-6) / a_c[ok]) ** exp   # ratio factor
+    t.loc[ok, "drainage_km2"] = a_c[ok]
+    if "channel_width_m" in t.columns:
+        cw = pd.to_numeric(t["channel_width_m"], errors="coerce").to_numpy("float64")
+        t["channel_width_m"] = np.where(ok, cw / scale, cw)
+    for col in ("confinement_ratio", "confinement_ratio_hand"):
+        if col in t.columns:
+            r = pd.to_numeric(t[col], errors="coerce").to_numpy("float64")
+            t[col] = np.where(ok, r * scale, r)
+    b1, b2 = breaks
+    t.loc[ok, "confinement"] = [_confinement_class(r, b1, b2)
+                                for r in t.loc[ok, "confinement_ratio"]]
+    if "gradient_class" not in t.columns:
+        t["gradient_class"] = [_gradient_class(g) for g in t["gradient"]]
+    ros = [_rosgen_candidates(cc, g, w) for cc, g, w in
+           zip(t.loc[ok, "confinement"], t.loc[ok, "gradient_class"],
+               t.loc[ok, "valley_width_m"])]
+    if "rosgen_candidates" in t.columns:
+        t.loc[ok, "rosgen_candidates"] = [r[0] for r in ros]
+    if "needs_geology" in t.columns:
+        t.loc[ok, "needs_geology"] = [r[1] for r in ros]
+    t.loc[ok, "drainage_from_10m"] = True
+    return t, n
+
+
+def _carry_inflow(res: dict, pa: dict, breaks, run_dir: Path) -> dict:
+    """Correct a tile pass's drainage from the 10 m network and, where any
+    reach changed, type its valleys again and rebuild its valley polygons."""
+    import geopandas as gpd
+
+    seg = (res.get("classified") or {}).get("segments")
+    if not seg or not Path(seg).exists():
+        return {"corrected": 0}
+    tile = gpd.read_file(seg)
+    coarse = gpd.read_file(pa["valley_types"], bbox=tuple(tile.total_bounds),
+                           columns=["drainage_km2"])
+    fixed, n = _inflow_correct(tile, coarse, breaks)
+    out = {"corrected": n,
+           "corrected_km": round(float(fixed.loc[fixed["drainage_from_10m"]]
+                                       .geometry.length.sum()) / 1000.0, 1)}
+    if not n:
+        return out
+    idir = run_dir / "inflow_dir"
+    idir.mkdir(parents=True, exist_ok=True)
+    corrected = idir / "segments_classified.gpkg"
+    fixed.to_file(str(corrected), driver="GPKG")
+    from .landscape.pipeline import _valley_alloc_for
+    from .landscape.rosgen import rosgen_valley_types
+    from .landscape.valleyform import valley_polygons
+
+    fans = run_dir / "fans_dir" / "fans.gpkg"
+    vform = run_dir / "valley_form_dir" / "valley_form_segments.csv"
+    with _out(run_dir) as g:
+        vt = rosgen_valley_types(
+            str(corrected), geology=pa.get("geology"),
+            fans=str(fans) if fans.exists() else None,
+            valley_form=str(vform) if vform.exists() else None, guard=g)
+    out["valley_types"] = vt.segments
+    try:
+        with _out(run_dir) as g:
+            out["valley_extent"] = valley_polygons(
+                _valley_alloc_for(str(corrected)), attributes=vt.segments,
+                guard=g)
+    except Exception as exc:                                 # noqa: BLE001
+        out["extent_failed"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+    return out
+
+
+def _clean_tile(fdir: Path) -> float:
+    """Delete a finished tile's working rasters and routing cache (the 1 m
+    and fine DEMs and every vector output stay); returns GB freed."""
+    freed = 0
+    for p in sorted(fdir.rglob("*"), key=lambda q: len(q.parts), reverse=True):
+        try:
+            in_dem = p.parent.name == "dem" or p.parent == fdir / "dem"
+            if p.is_dir() and p.name in (".geolens_cache", "dem_tiles"):
+                freed += sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+                shutil.rmtree(p, ignore_errors=True)
+            elif p.is_file() and p.suffix.lower() in (".tif", ".tiff") \
+                    and "run" in p.relative_to(fdir).parts and not in_dem:
+                freed += p.stat().st_size
+                p.unlink()
+        except OSError:
+            continue
+    return round(freed / 1e9, 2)
+
+
+def _fine_valley_huc12(code: str, row, root: str, dem_a: str, pa: dict,
                        cell_m: float, threshold_km2: float, breaks,
-                       keep_tiles: bool = False) -> dict:
-    """The landscape pass on one HUC12's lidar at ``cell_m``."""
+                       keep_1m: bool = True, keep_tiles: bool = False) -> dict:
+    """One HUC12 on the lidar: the 1 m mosaic (kept if asked), resampled to
+    ``cell_m``, the landscape pass on it, the 10 m drainage carried in, the
+    comparison with the 10 m pass, the working rasters deleted. Runs in a
+    worker process too: everything it needs comes in its arguments."""
     from . import api
 
     t0 = time.monotonic()
+    root = Path(root)
     fdir = root / "A_fine" / code
     fdir.mkdir(parents=True, exist_ok=True)
+    out: dict[str, Any] = {}
     try:
         import rasterio
 
         with rasterio.open(dem_a) as src:
             dem_crs = src.crs
-        row = hucs[hucs["huc12"].astype(str) == code]
-        if row.empty:
-            return {"status": "failed", "error": "not a HUC12 of this project"}
         poly = row.iloc[[0]][["huc12", "geometry"]].to_crs(dem_crs)
         poly_path = fdir / "huc12.gpkg"
         poly.to_file(str(poly_path), driver="GPKG", layer="huc12")
-        with _out(fdir / "dem"):
-            d = api.fetch_dem(str(poly_path), source="1m", resolution_m=cell_m,
-                              crs=dem_a, buffer_m=250.0)
+        # A 1 m mosaic kept from an earlier attempt (a crash, a reboot) is
+        # used again rather than downloaded again, if it reads.
+        kept = fdir / "dem" / "dem_mosaic.tif"
+        d = {"dem": str(kept), "coverage": 1.0} if _readable(kept) else None
+        if d is None:
+            with _out(fdir / "dem"):
+                d = api.fetch_dem(str(poly_path), source="1m",
+                                  resolution_m=LEVEL_B_CELL_M, crs=dem_a,
+                                  buffer_m=250.0)
+        else:
+            out["dem_reused"] = True
         if not keep_tiles:
             shutil.rmtree(Path(d["dem"]).parent / "dem_tiles", ignore_errors=True)
         if float(d.get("coverage") or 0.0) < 0.05:
             return {"status": "no lidar", "seconds": round(time.monotonic() - t0, 1)}
+        dem1 = d["dem"]
+        cell = float(cell_m)
+        dem_run = dem1
+        if _cell_of(dem1) < cell:
+            with _out(fdir / "dem"):
+                dem_run = api.resample_dem(dem1, cell)["path"]
+        if keep_1m:
+            out["dem_1m"] = dem1
+        elif dem_run != dem1:
+            for p in Path(dem1).parent.glob(Path(dem1).name + "*"):
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
         b1, b2 = breaks
-        with _out(fdir / "run"):
-            res = api.landscape_pass(
-                d["dem"], stream_threshold_km2=threshold_km2,
-                segment_length_m=500.0, confined_max=b1,
-                partly_confined_max=b2, valley_types=True, stream_types=False,
-                geology=pa.get("geology"), fans=True)
+        res = None
+        for attempt in range(3):
+            try:
+                with _out(fdir / "run"):
+                    res = api.landscape_pass(
+                        dem_run, stream_threshold_km2=threshold_km2,
+                        segment_length_m=500.0, confined_max=b1,
+                        partly_confined_max=b2, valley_types=True,
+                        stream_types=False, geology=pa.get("geology"), fans=True)
+                break
+            except MemoryError:
+                if attempt == 2:
+                    raise
+                cell *= 2
+                note(f"HUC12 {code}: out of memory, again at {cell:g} m")
+                with _out(fdir / "dem"):
+                    dem_run = api.resample_dem(dem_run, cell)["path"]
+                out["coarsened_for_memory"] = True
+        cell = _cell_of(dem_run)                 # what the pass really ran on
+        out["cell_m"] = cell
+        out["dem"] = dem_run
         vt = (res.get("valley_types") or {}).get("segments")
         warns = [str(w)[:300] for w in (res.get("warnings") or [])]
         if not vt:
-            return {"status": "failed", "seconds": round(time.monotonic() - t0, 1),
+            return {**out, "status": "failed",
+                    "seconds": round(time.monotonic() - t0, 1),
                     "error": ("the pass made no valley types: "
                               + "; ".join(warns[:2]))[:500]}
-        out = {"status": "done", "cell_m": cell_m, "dem": d["dem"],
-               "valley_types": vt, "valley_extent": res.get("valley_extent"),
-               "warnings": warns[:6]}
+        extent = res.get("valley_extent")
+        try:
+            inflow = _carry_inflow(res, pa, breaks, fdir / "run")
+        except Exception as exc:                             # noqa: BLE001
+            inflow = {"corrected": 0,
+                      "failed": f"{type(exc).__name__}: {str(exc)[:200]}"}
+        vt = inflow.pop("valley_types", None) or vt
+        extent = inflow.pop("valley_extent", None) or extent
+        out.update(status="done", valley_types=vt, valley_extent=extent,
+                   inflow=inflow, warnings=warns[:6])
         try:
             extent_10m = Path(pa["valley_types"]).parent.parent \
                 / "valley_extent_dir" / "valley_extent.gpkg"
             out["compare"] = _compare_valleys(
-                pa["valley_types"], vt, poly, _cell_of(dem_a), _cell_of(d["dem"]),
+                pa["valley_types"], vt, poly, _cell_of(dem_a), cell,
                 coarse_extent=str(extent_10m) if extent_10m.exists() else None,
-                fine_extent=res.get("valley_extent"))
+                fine_extent=extent)
         except Exception as exc:                             # noqa: BLE001
             out["compare_failed"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+        out["freed_gb"] = _clean_tile(fdir)
         out["seconds"] = round(time.monotonic() - t0, 1)
         return out
     except Exception as exc:                                 # noqa: BLE001
-        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:500],
+        return {**out, "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}"[:500],
                 "seconds": round(time.monotonic() - t0, 1)}
+
+
+def _readable(path: Path) -> bool:
+    """A raster that exists and reads (a download cut off by a crash does
+    not; it is deleted so the tile fetches it again)."""
+    if not path.exists():
+        return False
+    try:
+        import rasterio
+        from rasterio.windows import Window
+
+        with rasterio.open(str(path)) as src:
+            src.read(1, window=Window(0, 0, min(64, src.width), min(64, src.height)))
+            src.read(1, window=Window(max(0, src.width - 64), max(0, src.height - 64),
+                                      min(64, src.width), min(64, src.height)))
+        return True
+    except Exception:                                        # noqa: BLE001
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return False
 
 
 def _cell_of(raster: str) -> float:
@@ -1808,11 +2105,35 @@ def _cell_of(raster: str) -> float:
         return 10.0
 
 
+def _free_gb(path: Path) -> float:
+    try:
+        return shutil.disk_usage(str(path)).free / 1e9
+    except OSError:
+        return float("inf")
+
+
+def fine_workers(cell_m: float, tile_km2: float = 200.0, cap: int = 6) -> int:
+    """How many HUC12s to run at once: a tile of ``tile_km2`` at ``cell_m``
+    peaks near 170 bytes a cell (the Kingman 10 m pass: 70 GB for 0.41
+    billion cells); use 60% of the memory free now and half the cores
+    (pysheds and numpy use more than one), at most ``cap``."""
+    from .landscape.plan import available_ram_gb
+
+    per_gb = max(2.0, tile_km2 * 1e6 / (cell_m ** 2) * 170 / 1e9)
+    avail = available_ram_gb()
+    by_mem = int((0.6 * avail) // per_gb) if avail else 2
+    by_cpu = max(1, ((os.cpu_count() or 2) - 2) // 2)
+    return max(1, min(cap, by_mem, by_cpu))
+
+
 def _fine_valleys(root: Path, st: _Status, hucs, pa: dict, dem_a: str,
                   mode: str, listed, count: int, cell_m: float,
-                  threshold_km2: float, keep_tiles: bool = False) -> dict:
-    """Run the finer valley pass over the pilot (or listed) HUC12s and
-    merge what it made; returns the merged layers' paths."""
+                  threshold_km2: float, keep_tiles: bool = False,
+                  keep_1m: bool = True, workers: int | None = None,
+                  min_free_gb: float = 30.0) -> dict:
+    """Run the finer valley pass over the pilot, the listed or all the
+    HUC12s with lidar (the pilot first, so its comparison comes early),
+    several at once when ``workers`` > 1, and merge what it made."""
     import geopandas as gpd
     import pandas as pd
 
@@ -1827,30 +2148,111 @@ def _fine_valleys(root: Path, st: _Status, hucs, pa: dict, dem_a: str,
     elif not rec.get("chosen"):
         note(f"project: choosing headwater HUC12s for the {cell_m:g} m valley pilot")
         rec["chosen"], rec["why"] = _fine_pilot(hucs, st, pa, count)
+    order = list(rec["chosen"])
+    if mode == "all":
+        lidar = sorted(h for h, v in st.data["huc12"].items()
+                       if v.get("status") in ("done", "failed"))
+        order += [h for h in lidar if h not in order]
     st.data["fine_valleys"] = rec
     st.save()
     breaks = (st.data.get("confinement") or {}).get("breaks") \
         if (st.data.get("confinement") or {}).get("applied") else None
     breaks = list(breaks or pa.get("confinement_breaks") or PUBLISHED_BREAKS)
     rec["breaks"] = breaks
-    for code in progress(rec["chosen"], label=f"{cell_m:g} m valley HUC12s"):
-        if (rec["huc12"].get(code) or {}).get("status") == "done":
-            continue
-        note(f"project: valleys at {cell_m:g} m on the lidar, HUC12 {code}")
-        rec["huc12"][code] = _fine_valley_huc12(
-            code, hucs, root, dem_a, pa, cell_m, threshold_km2, breaks,
-            keep_tiles)
+    codes = hucs["huc12"].astype(str)
+    todo = [c for c in order
+            if (rec["huc12"].get(c) or {}).get("status") not in ("done", "no lidar")]
+    n_workers = int(workers) if workers else fine_workers(cell_m)
+    n_workers = max(1, min(n_workers, len(todo) or 1))
+    rec["workers"] = n_workers
+    free = _free_gb(root)
+    need = len(todo) * (0.45 if keep_1m else 0.15)
+    if free < need + min_free_gb:
+        st.warn(f"The {cell_m:g} m valley pass needs about {need:.0f} GB more "
+                f"for {len(todo)} HUC12s ({'with' if keep_1m else 'without'} "
+                f"the 1 m DEMs); {free:.0f} GB is free. It stops by itself, "
+                f"resumable, if the drive gets under {min_free_gb:g} GB.")
+    note(f"project: valleys at {cell_m:g} m on the lidar: {len(todo)} HUC12s "
+         f"to do, {n_workers} at a time")
+    rec.pop("stopped", None)
+
+    def args(code):
+        return (code, hucs[codes == code], str(root), dem_a, pa, cell_m,
+                threshold_km2, breaks, keep_1m, keep_tiles)
+
+    def record(code, r):
+        prev = rec["huc12"].get(code) or {}
+        if r.get("status") == "failed" and prev.get("status") == "failed":
+            r["retried"] = True
+        rec["huc12"][code] = r
+        done_n = sum(1 for v in rec["huc12"].values() if v.get("status") == "done")
+        note(f"project: {cell_m:g} m valleys, HUC12 {code}: {r.get('status')} "
+             f"({r.get('seconds', 0):.0f} s); {done_n} of {len(order)} done")
         st.save()
+
+    for round_ in ("first", "retry"):
+        if round_ == "retry":
+            todo = [c for c in order if (rec["huc12"].get(c) or {}).get("status")
+                    == "failed" and not rec["huc12"][c].get("retried")]
+            if not todo or rec.get("stopped"):
+                break
+            note(f"project: retrying {len(todo)} {cell_m:g} m HUC12s that failed")
+        if n_workers <= 1:
+            for code in todo:
+                if _free_gb(root) < min_free_gb:
+                    rec["stopped"] = f"under {min_free_gb:g} GB free"
+                    break
+                record(code, _fine_valley_huc12(*args(code)))
+        else:
+            import multiprocessing as mp
+            from concurrent.futures import (FIRST_COMPLETED, ProcessPoolExecutor,
+                                            wait)
+
+            queue = list(todo)
+            # spawn, as Windows always does: a forked worker inherits the
+            # parent's threads (GDAL, numba) and can die at its first step.
+            ctx = mp.get_context("spawn")
+            with ProcessPoolExecutor(max_workers=n_workers, mp_context=ctx) as ex:
+                running = {}
+
+                def fill():
+                    while queue and len(running) < n_workers:
+                        if _free_gb(root) < min_free_gb:
+                            rec["stopped"] = f"under {min_free_gb:g} GB free"
+                            queue.clear()
+                            return
+                        code = queue.pop(0)
+                        running[ex.submit(_fine_valley_huc12, *args(code))] = code
+
+                fill()
+                while running:
+                    finished, _ = wait(list(running), return_when=FIRST_COMPLETED)
+                    for fut in finished:
+                        code = running.pop(fut)
+                        try:
+                            r = fut.result()
+                        except Exception as exc:             # noqa: BLE001
+                            r = {"status": "failed",
+                                 "error": f"{type(exc).__name__}: {exc}"[:500]}
+                        record(code, r)
+                    fill()
+    if rec.get("stopped"):
+        st.warn(f"The {cell_m:g} m valley pass stopped: the drive is "
+                f"{rec['stopped']}. Free some space and run the project again "
+                f"to carry on.")
+    else:
+        st.unwarn(f"The {cell_m:g} m valley pass stopped")
     tag = f"{cell_m:g}m"
     merged: dict[str, str] = {}
-    rows = []
     for kind in ("valley_types", "valley_extent"):
         parts = []
-        for code, r in rec["huc12"].items():
+        for code in order:
+            r = rec["huc12"].get(code) or {}
             p = r.get(kind)
             if r.get("status") == "done" and p and Path(p).exists():
                 g = gpd.read_file(p)
                 g["huc12"] = code
+                g["cell_m"] = r.get("cell_m", cell_m)
                 parts.append(g)
         if parts:
             g = gpd.GeoDataFrame(pd.concat(parts, ignore_index=True),
@@ -1859,53 +2261,114 @@ def _fine_valleys(root: Path, st: _Status, hucs, pa: dict, dem_a: str,
             path.parent.mkdir(parents=True, exist_ok=True)
             g.to_file(str(path), driver="GPKG", layer=f"{kind}_{tag}")
             merged[f"{kind}_{tag}"] = str(path)
-    for code, r in rec["huc12"].items():
+    rows = []
+    why = (rec.get("why") or {}).get("why") or {}
+    for code in order:
+        r = rec["huc12"].get(code)
+        if not r:
+            continue
         rows.append({"huc12": code, "status": r.get("status"),
-                     "setting": ((rec.get("why") or {}).get("why") or {}).get(code),
-                     **(r.get("compare") or {})})
+                     "pilot": code in rec["chosen"], "setting": why.get(code),
+                     "cell_m": r.get("cell_m"),
+                     "inflow_corrected": (r.get("inflow") or {}).get("corrected"),
+                     "seconds": r.get("seconds"), **(r.get("compare") or {})})
     if rows:
         t = pd.DataFrame(rows)
-        t["type_changes"] = t.get("type_changes", pd.Series(dtype=object)) \
-            .apply(lambda v: "; ".join(v) if isinstance(v, list) else v)
+        if "type_changes" in t.columns:
+            t["type_changes"] = t["type_changes"].apply(
+                lambda v: "; ".join(v) if isinstance(v, list) else v)
         csv = root / "A_fine" / f"comparison_{tag}.csv"
         csv.parent.mkdir(parents=True, exist_ok=True)
         t.to_csv(csv, index=False)
         rec["comparison"] = str(csv)
+        rec["summary"] = _fine_summary(t)
     st.data["fine_valleys"] = rec
     st.save()
     return merged
 
 
+def _fine_summary(t) -> dict:
+    """Length-weighted agreement and shares over every HUC12 compared."""
+    import pandas as pd
+
+    d = t[t["status"] == "done"].copy()
+    out: dict[str, Any] = {"done": int(len(d)),
+                           "failed": int((t["status"] == "failed").sum())}
+    if d.empty or "km_fine" not in d.columns:
+        return out
+    w = pd.to_numeric(d["km_fine"], errors="coerce").fillna(0.0)
+    w10 = pd.to_numeric(d.get("km_10m"), errors="coerce").fillna(0.0)
+    out["km_10m"] = round(float(w10.sum()), 1)
+    out["km_fine"] = round(float(w.sum()), 1)
+    for col, weight in (("landscape_type_agreement", w),
+                        ("confinement_agreement", w), ("confined_fine", w),
+                        ("unresolved_fine", w), ("confined_10m", w10),
+                        ("unresolved_10m", w10)):
+        if col in d.columns:
+            v = pd.to_numeric(d[col], errors="coerce")
+            m = v.notna() & (weight > 0)
+            if m.any():
+                out[col] = round(float((v[m] * weight[m]).sum() / weight[m].sum()), 3)
+    for col in ("valley_km2_10m", "valley_km2_fine"):
+        if col in d.columns:
+            out[col] = round(float(pd.to_numeric(d[col], errors="coerce").sum()), 1)
+    if "inflow_corrected" in d.columns:
+        out["inflow_corrected"] = int(pd.to_numeric(d["inflow_corrected"],
+                                                    errors="coerce").fillna(0).sum())
+    return out
+
+
 def _fine_lines(rec: dict | None) -> list[str]:
     """RESULTS.md: the finer valley pass against the 10 m one."""
-    if not rec or not rec.get("huc12"):
+    if not rec or (not rec.get("huc12") and not rec.get("stopped")):
         return []
     cell = rec.get("cell_m", FINE_CELL_M)
     basis = str((rec.get("why") or {}).get("basis") or "")
+    mode = rec.get("mode", "pilot")
+    many = mode == "all" or len(rec["huc12"]) > 12
     caveat = (" None qualified here, so a main stem entering one of these "
               "HUC12s carries only the drainage inside it, which narrows its "
               "channel and widens its confinement ratio."
-              if "no headwater" in basis else "")
-    lines = [f"## Valleys on the lidar at {cell:g} m ({rec.get('mode', 'pilot')})", "",
+              if "no headwater" in basis and not many else "")
+    lines = [f"## Valleys on the lidar at {cell:g} m ({mode})", "",
              f"Level A's valley pass run again on the 3DEP lidar resampled to "
-             f"{cell:g} m, HUC12 by HUC12, with the same stream threshold and "
-             f"the confinement breaks {rec.get('breaks')}. Chosen from "
-             f"{basis}: a tile cut to one HUC12 only knows the drainage inside "
-             f"it, so the pilot takes HUC12s with nothing draining into "
-             f"them.{caveat} Agreement is by stream length, each {cell:g} m "
-             f"reach against the nearest 10 m reach. Layers "
-             f"`valley_types_{cell:g}m` and `valley_extent_{cell:g}m`; the "
-             f"table is `A_fine/comparison_{cell:g}m.csv`.", "",
-             "| HUC12 | Chosen for | Status | Stream km 10 m / fine | Valley type "
-             "agreement | Confinement agreement | Confined 10 m / fine | "
-             "Unresolved 10 m / fine | Valley width, fine / 10 m | Valley km2 10 m / fine |",
-             "|---|---|---|---|---|---|---|---|---|---|"]
+             f"{cell:g} m, HUC12 by HUC12 ({rec.get('workers', 1)} at a time), "
+             f"with the same stream threshold and the confinement breaks "
+             f"{rec.get('breaks')}. A tile cut to one HUC12 only knows the "
+             f"drainage inside it: where a reach runs along a 10 m reach that "
+             f"drains much more, it takes the 10 m drainage (channel width and "
+             f"confinement follow) and its valley is typed again. The pilot "
+             f"HUC12s, chosen from {basis}, go first.{caveat} Agreement is by "
+             f"stream length, each {cell:g} m reach against the nearest 10 m "
+             f"reach. Layers `valley_types_{cell:g}m` and "
+             f"`valley_extent_{cell:g}m`; every HUC12 is in "
+             f"`A_fine/comparison_{cell:g}m.csv`.", ""]
 
     def pct(v):
         return "" if v is None else f"{100 * v:.0f}%"
 
+    s = rec.get("summary") or {}
+    if many and s:
+        lines += [f"Done {s.get('done', 0)} HUC12s, failed {s.get('failed', 0)}; "
+                  f"stream km 10 m / {cell:g} m: {s.get('km_10m')} / "
+                  f"{s.get('km_fine')}; valley type agreement "
+                  f"{pct(s.get('landscape_type_agreement'))}, confinement "
+                  f"agreement {pct(s.get('confinement_agreement'))}; confined "
+                  f"{pct(s.get('confined_10m'))} at 10 m, "
+                  f"{pct(s.get('confined_fine'))} at {cell:g} m; unresolved "
+                  f"{pct(s.get('unresolved_10m'))} at 10 m, "
+                  f"{pct(s.get('unresolved_fine'))} at {cell:g} m; valley area "
+                  f"{s.get('valley_km2_10m')} km2 / {s.get('valley_km2_fine')} km2; "
+                  f"{s.get('inflow_corrected', 0)} reaches took the 10 m "
+                  f"drainage.", ""]
+    lines += ["| HUC12 | Chosen for | Status | Stream km 10 m / fine | Valley type "
+              "agreement | Confinement agreement | Confined 10 m / fine | "
+              "Unresolved 10 m / fine | Valley width, fine / 10 m | Valley km2 10 m / fine |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
     why = (rec.get("why") or {}).get("why") or {}
-    for code, r in rec["huc12"].items():
+    show = [c for c in rec["huc12"] if not many or c in (rec.get("chosen") or [])]
+    for code in show:
+        r = rec["huc12"][code]
         c = r.get("compare") or {}
         lines.append(
             f"| {code} | {why.get(code, '')} | {r.get('status')} | "
@@ -1916,16 +2379,21 @@ def _fine_lines(rec: dict | None) -> list[str]:
             f"{pct(c.get('unresolved_10m'))} / {pct(c.get('unresolved_fine'))} | "
             f"{c.get('valley_width_ratio_median', '')} | "
             f"{c.get('valley_km2_10m', '')} / {c.get('valley_km2_fine', '')} |")
-    changes = [f"{code}: {', '.join(r['compare']['type_changes'])}"
-               for code, r in rec["huc12"].items()
-               if (r.get("compare") or {}).get("type_changes")]
+    changes = [f"{code}: {', '.join(rec['huc12'][code]['compare']['type_changes'])}"
+               for code in show
+               if (rec["huc12"][code].get("compare") or {}).get("type_changes")]
     if changes:
         lines += ["", "Largest valley type changes, 10 m -> fine:", ""]
         lines += [f"- {c}" for c in changes]
     failed = [f"{code}: {r.get('error')}" for code, r in rec["huc12"].items()
               if r.get("status") == "failed"]
     if failed:
-        lines += ["", "Failed:", ""] + [f"- {f}" for f in failed]
+        lines += ["", f"Failed ({len(failed)}):", ""] + [f"- {f}" for f in failed[:20]]
+        if len(failed) > 20:
+            lines.append(f"- and {len(failed) - 20} more (project.json)")
+    if rec.get("stopped"):
+        lines += ["", f"Stopped early: the drive is {rec['stopped']}; run the "
+                      f"project again to carry on."]
     return lines + [""]
 
 

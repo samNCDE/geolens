@@ -962,7 +962,9 @@ class RunProject(_Tool):
     FINE = [("None", "none"),
             ("Pilot: three headwater HUC12s (a mountain one, a fan and "
              "piedmont one, an alluvial valley one), compared with 10 m",
-             "pilot")]
+             "pilot"),
+            ("Every HUC12 with lidar (the pilot first; hours to a day or "
+             "two, several HUC12s at once)", "all")]
 
     def parameters(self):
         return [

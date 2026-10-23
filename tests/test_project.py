@@ -100,6 +100,9 @@ def stubs(monkeypatch, tmp_path):
                         lambda *a, **k: {"path": None, "flowlines": 0,
                                          "named": 0})
     monkeypatch.setenv("GEOLENS_PERSIST", "0")
+    # the container's disk is small; the lidar pass's disk guard is tested
+    # on its own
+    monkeypatch.setattr(project, "_free_gb", lambda p: 1000.0)
     return calls
 
 
@@ -829,7 +832,12 @@ def test_valleys_again_on_the_lidar_at_3_m_for_a_pilot(stubs, tmp_path):
     assert "carries only the drainage inside it" in (out / "RESULTS.md").read_text()
     rec = fine["huc12"]["150100000101"]
     assert rec["status"] == "done", rec
-    assert 3.0 in stubs["res"]                         # the tile at 3 m
+    assert stubs["res"][-1] == 1.0                     # the tile's 1 m lidar
+    assert rec["cell_m"] == 30.0          # the stand-in "lidar" is coarser than 3 m
+    assert not list((out / "A_fine" / "150100000101" / "run").rglob("*.tif")), \
+        "the working rasters are deleted"
+    assert Path(rec["dem_1m"]).exists(), "the 1 m DEM is kept"
+    assert "inflow" in rec
     c = rec["compare"]
     assert c["km_10m"] > 0 and c["km_fine"] > 0
     assert c["matched_share"] > 0.5
@@ -894,3 +902,105 @@ def test_a_new_project_starts_from_an_earlier_one_without_changing_it(stubs,
         project.copy_project(v42, v42)
     with pytest.raises(GeolensError):
         project.copy_project(tmp_path / "boundary_dir_missing", tmp_path / "x")
+
+
+
+def test_a_main_stem_entering_a_tile_takes_the_10_m_drainage():
+    """A HUC12 tile only routes the drainage inside it: a main stem coming
+    in from upstream starts small. Along a 10 m reach that drains much
+    more, running the same way, the tile reach takes the 10 m drainage; the
+    channel widens as A**0.35 and the ratio narrows by as much. A tributary
+    crossing near the main stem is left alone."""
+    from shapely.geometry import LineString
+
+    tile = gpd.GeoDataFrame(
+        {"seg_id": [1, 2], "drainage_km2": [2.0, 1.5], "gradient": [0.01, 0.03],
+         "valley_width_m": [300.0, 40.0], "channel_width_m": [3.0, 2.7],
+         "confinement_ratio": [100.0, 14.8], "confinement": ["unconfined"] * 2},
+        geometry=[LineString([(0, 0), (500, 0)]),             # along the river
+                  LineString([(250, 10), (250, 500)])],       # a tributary
+        crs=UTM)
+    coarse = gpd.GeoDataFrame(
+        {"drainage_km2": [500.0, 3.0]},
+        geometry=[LineString([(0, 15), (600, 15)]),           # the river at 10 m
+                  LineString([(260, 30), (260, 520)])],
+        crs=UTM)
+    fixed, n = project._inflow_correct(tile, coarse, breaks=(1.0, 16.0))
+    assert n == 1
+    river, trib = fixed.iloc[0], fixed.iloc[1]
+    assert river["drainage_km2"] == 500.0 and river["drainage_from_10m"]
+    f = (2.0 / 500.0) ** 0.35
+    assert river["confinement_ratio"] == pytest.approx(100.0 * f, rel=1e-6)
+    assert river["channel_width_m"] == pytest.approx(3.0 / f, rel=1e-6)
+    assert river["confinement"] == "partly confined"         # 14.5 with breaks 1 and 16
+    assert trib["drainage_km2"] == 1.5 and not trib["drainage_from_10m"]
+
+
+def test_the_worker_count_follows_memory_and_cores(monkeypatch):
+    import geolens.landscape.plan as plan
+
+    monkeypatch.setattr(plan, "available_ram_gb", lambda: 64.0)
+    monkeypatch.setattr(project.os, "cpu_count", lambda: 16)
+    assert project.fine_workers(3.0) == 6                 # cores and cap allow 6
+    monkeypatch.setattr(plan, "available_ram_gb", lambda: 8.0)
+    assert project.fine_workers(3.0) == 1                 # 8 GB: one at a time
+    monkeypatch.setattr(plan, "available_ram_gb", lambda: None)
+    monkeypatch.setattr(project.os, "cpu_count", lambda: 4)
+    assert project.fine_workers(3.0) == 1
+
+
+def test_the_lidar_valley_pass_in_parallel_stops_when_the_disk_fills(
+        stubs, tmp_path, monkeypatch):
+    """Two HUC12s at once through the process pool; then, with the drive
+    nearly full, the pass stops before a tile and says so, resumable."""
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["field office"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    out = tmp_path / "proj"
+    kw = dict(level_b="pilot", pilot_count=1, stream_threshold_km2=3.0,
+              geology=None, section_plots=False, soils=False, data="none")
+    project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    # Workers are spawned (as on Windows), so the test's stand-in download
+    # does not reach them: each tile's 1 m mosaic is already there, as one
+    # kept from an interrupted run would be, and is used again.
+    for code in ("150100000101", "150100000102"):
+        d = out / "A_fine" / code / "dem"
+        d.mkdir(parents=True)
+        shutil.copyfile(DEM, d / "dem_mosaic.tif")
+    fetched = len(stubs["fetch"])
+    project.run_project(str(bnd), guard=Guard(out_dir=out), fine_valleys="listed",
+                        fine_huc12s="150100000101,150100000102",
+                        fine_workers=2, **kw)
+    assert len(stubs["fetch"]) == fetched, "the kept mosaics were used"
+    status = json.loads((out / "project.json").read_text())
+    fine = status["fine_valleys"]
+    assert fine["workers"] == 2
+    assert {r["status"] for r in fine["huc12"].values()} == {"done"}, fine["huc12"]
+    assert all(r.get("dem_reused") for r in fine["huc12"].values())
+    assert fine["summary"]["done"] == 2
+
+    out2 = tmp_path / "proj2"
+    monkeypatch.setattr(project, "_free_gb", lambda p: 5.0)
+    project.run_project(str(bnd), guard=Guard(out_dir=out2), fine_valleys="pilot",
+                        fine_count=1, **kw)
+    status = json.loads((out2 / "project.json").read_text())
+    assert status["fine_valleys"]["huc12"] == {}
+    assert "under 30 GB free" in status["fine_valleys"]["stopped"]
+    assert any("valley pass stopped" in w for w in status["warnings"])
+    assert "Stopped early" in (out2 / "RESULTS.md").read_text()
+
+
+def test_one_run_at_a_time_per_project_folder(tmp_path, monkeypatch):
+    """A second run started on a folder while the first still works is
+    refused; a lock left by a run that died is taken over."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "run.lock").write_text("424242 2026-10-23T00:00:00Z\n")
+    monkeypatch.setattr(project, "_pid_alive", lambda pid: True)
+    with pytest.raises(GeolensError, match="Another geolens run"):
+        project._take_lock(root)
+    monkeypatch.setattr(project, "_pid_alive", lambda pid: False)
+    project._take_lock(root)                       # the dead run's lock
+    assert (root / "run.lock").read_text().split()[0] == str(__import__("os").getpid())
+    project._take_lock(root)                       # this process again: fine

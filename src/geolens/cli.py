@@ -342,7 +342,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="level A grid in metres (default 10; 20 or 30 for a "
                         "reconnaissance run on a laptop or a cloud runner)")
     s.add_argument("--fine-valleys", default="none",
-                   choices=["none", "pilot", "listed"],
+                   choices=["none", "pilot", "listed", "all"],
                    help="valleys again on the lidar at --fine-cell for a pilot "
                         "of headwater HUC12s (one mountain, one fan and "
                         "piedmont, one alluvial valley) or the --fine-huc12s "
@@ -352,6 +352,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fine-count", type=int, default=3)
     s.add_argument("--fine-cell", type=float, default=3.0,
                    help="cell size of the finer valley pass, m (default 3)")
+    s.add_argument("--fine-workers", type=int, default=None,
+                   help="HUC12s run at once in the finer valley pass (default: "
+                        "as many as memory and cores allow, at most 6)")
     s.add_argument("--copy-from", default=None,
                    help="start this new project folder from an earlier one: "
                         "its level A, level B, soils and data are copied (the "
@@ -653,7 +656,7 @@ def main(argv: list[str] | None = None) -> int:
                 level_a_cell_m=args.cell_a,
                 fine_valleys=args.fine_valleys, fine_huc12s=args.fine_huc12s,
                 fine_count=args.fine_count, fine_cell_m=args.fine_cell,
-                copy_from=args.copy_from)
+                fine_workers=args.fine_workers, copy_from=args.copy_from)
             _print({"project": r.get("project"),
                     "results": str(out / "RESULTS.md"),
                     "huc12_summary": r.get("huc12_summary"),

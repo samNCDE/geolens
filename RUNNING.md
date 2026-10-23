@@ -1450,6 +1450,23 @@ one that is not a headwater). Whether a whole office at 3 m is worth it
 is the pilot's question; that run needs the drainage from the HUC12s
 above carried into each tile first.
 
+### The lidar valley pass over a whole project (v0.44)
+
+`fine_valleys="all"` (toolbox Options ▸ *Valleys again on the lidar at
+3 m* ▸ *Every HUC12 with lidar*; shell `--fine-valleys all --fine-cell 3`)
+runs the valley pass on every HUC12 with lidar, the pilot first, several
+at once (`--fine-workers`, by default as many as free memory and cores
+allow, at most 6). Each tile's main stems take the 10 m network's drainage
+where the tile only held part of it, so a river entering from upstream is
+typed as a river. `--keep-lidar-dem` keeps each HUC12's 1 m mosaic (about
+300 MB each); the working rasters are deleted as each HUC12 finishes. For
+a run of a day or more, start it outside ArcGIS Pro (a .bat that runs
+`python -m geolens.cli project ...`, with TMP/TEMP on the data drive): it
+saves each HUC12 as it finishes, retries the failed ones once, stops
+cleanly when the drive is nearly full, keeps Windows awake, and carries on
+from where it stopped when started again. Pause Windows Update for the
+duration.
+
 ### A new project folder from an earlier one (v0.43.1)
 
 To try a new version or option on a project without touching the folder

@@ -5,7 +5,7 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state on 23 Oct 2026, Friday midday Arizona)
 
-**State.** v0.43.1 beta. **Work only on drive S:** (Sam's instruction; C:
+**State.** v0.44.0 beta. **Work only on drive S:** (Sam's instruction; C:
 is nearly full). The toolbox folders `S:\geolens\gl33` (the one in Sam's
 kingman ArcGIS project) and `S:\geolens\gl42` both get each release's
 changed files, never while a run uses them. Zips and git bundles are in
@@ -144,6 +144,55 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.44.0 (beta): the lidar valley pass over a whole field office
+
+Sam, 23 Oct, 12:15 pm AZ: keep the 1 m DEMs, run the valleys on the lidar
+over the whole landscape now ("even if it takes five days"), then 3 m
+("I need this done sooner"), use the machine as much as possible, and
+"how can we make sure it won't crash out". The pilot of v0.43 became an
+office-wide pass built to run for days unattended:
+
+- **`fine_valleys="all"`** (CLI `--fine-valleys all`, toolbox *Every
+  HUC12 with lidar*): every HUC12 level B ran on (done or failed), the
+  three pilot headwater HUC12s first so their comparison comes early.
+- **Drainage carried in** (`_inflow_correct`): a tile only routes the
+  drainage inside it, so a main stem entering from upstream started as a
+  wash. A tile reach whose midpoint is within 40 m of a 10 m reach running
+  the same way (within 35 degrees) that drains 1.5 times as much and 5 km2
+  more takes the 10 m drainage; the channel width scales as A^0.35 (the
+  classify relation), the confinement ratio by the inverse, the class with
+  the project's breaks, and the tile's valleys are typed again and their
+  polygons rebuilt (`inflow_dir`). Tested on a river and a tributary
+  crossing it.
+- **The 1 m mosaic is kept** (`keep_lidar_dem`, default for the pilot) and
+  resampled to `fine_cell_m` for the pass; a kept mosaic that reads is
+  used again after a crash instead of being downloaded again.
+- **Several HUC12s at once**: `fine_workers` (default `fine_workers()`:
+  60% of free memory over ~170 bytes a cell of a 200 km2 tile, half the
+  cores, at most 6), spawned processes (as Windows does; a forked worker
+  died at once under pytest). The parent alone writes project.json.
+- **Crash-proofing**: each HUC12 saved as it finishes; a failed HUC12 is
+  retried once at the end and never stops the run; out of memory, a tile
+  runs again at twice the cell; the working rasters and routing cache of
+  each finished tile are deleted (DEMs and vectors kept); free space is
+  checked before every tile and the pass stops cleanly, resumable, under
+  30 GB (and warns at the start if the estimate does not fit); on Windows
+  the run asks the system not to sleep while it works
+  (`SetThreadExecutionState`). The GPU is not used: the slow parts (pysheds
+  routing, depression filling, valley extraction) are CPU code.
+- RESULTS.md: for many HUC12s, one length-weighted summary (agreement,
+  confined and unresolved shares at 10 m and 3 m, valley area, reaches that
+  took the 10 m drainage), the pilot rows, failures; every HUC12 in
+  `A_fine/comparison_3m.csv`.
+
+Run: `S:\kingman\run_geolens_v43.bat` (double-click; outside ArcGIS Pro,
+so an ArcGIS crash cannot stop it; temp files on S:; restarts itself up to
+five times on an error; double-click again after a reboot): project
+`S:\kingman\geolens_v43` copied from `geolens_v42`, level B all (the four
+failed retried, their 1 m DEMs kept), the fire step retried, the 3 m pass
+on every HUC12 with lidar, the 1 m DEMs kept. Sam: pause Windows Update
+for a week, keep the PC plugged in.
 
 ## v0.43.1 (beta): a new project folder starts from an earlier one
 
