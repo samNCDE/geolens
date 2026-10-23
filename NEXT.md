@@ -5,7 +5,7 @@ and what to trust. This file is the working log behind it.
 
 ## Pick up here (state on 23 Oct 2026, Friday midday Arizona)
 
-**State.** v0.43.0 beta. **Work only on drive S:** (Sam's instruction; C:
+**State.** v0.43.1 beta. **Work only on drive S:** (Sam's instruction; C:
 is nearly full). The toolbox folders `S:\geolens\gl33` (the one in Sam's
 kingman ArcGIS project) and `S:\geolens\gl42` both get each release's
 changed files, never while a run uses them. Zips and git bundles are in
@@ -16,8 +16,10 @@ changed files, never while a run uses them. Zips and git bundles are in
   whole field office, finished 23 Oct 12:15 am AZ); `geolens_v38` is
   superseded. Review in the v0.43.0 entry below and in the project doc
   `claude/geolens_status.md`.
-- At 5 pm AZ on 23 Oct the project tool runs once more on `geolens_v42`
-  with v0.43 and the 3 m valley pilot (see the v0.43.0 entry). After it:
+- On 23 Oct (~11:30 am AZ) the project tool ran into a new folder,
+  `S:\kingman\geolens_v43`, started from `geolens_v42` (copied; v42 is
+  Sam's to review and is never written) with v0.43.1 and the 3 m valley
+  pilot (see the v0.43.0 and v0.43.1 entries). After it:
   review the pilot's comparison (RESULTS.md *Valleys on the lidar at
   3 m*), then the validation sample for Sam, the form rules for the
   "check" combinations and the sensitivity weights with him.
@@ -142,6 +144,26 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.43.1 (beta): a new project folder starts from an earlier one
+
+Sam, 23 Oct, as the v0.43 run was about to start on `geolens_v42`:
+"don't overwrite 42, call the new version 43; I will review 42 in the
+meantime". A new folder would redo level A (2 h) and level B (~20 h), so
+`copy_from` (toolbox *Start from an earlier project folder (copied, never
+changed)*; CLI `--copy-from`) starts a new project folder from an earlier
+one: its boundary, HUC12s, level A (without the routing cache and the DEM
+tiles), level B, soils and data are copied, project.json is written with
+every path moved from the old folder's own root (as its run wrote them,
+drive letter and all) to the new one, and the run carries on from there:
+the fire step and the failed HUC12s are retried, the calibration checked,
+the 3 m pilot run, the merged layers, summary, synthesis and report made
+in the new folder. The merged layers, logs, review folder and report of
+the old one are not copied. The old folder is only read (test: every
+file's mtime unchanged). RESULTS.md says where it was copied from.
+
+Run (23 Oct, ~11:30 am AZ): the project tool on `S:\kingman\geolens_v43`,
+copy from `S:\kingman\geolens_v42`, same settings, the 3 m pilot.
 
 ## v0.43.0 (beta): valleys on the lidar at 3 m (a pilot), and the v42 fixes
 

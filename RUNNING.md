@@ -1450,6 +1450,21 @@ one that is not a headwater). Whether a whole office at 3 m is worth it
 is the pilot's question; that run needs the drainage from the HUC12s
 above carried into each tile first.
 
+### A new project folder from an earlier one (v0.43.1)
+
+To try a new version or option on a project without touching the folder
+you are reviewing, give the new run a new project folder and *Start from
+an earlier project folder* (shell `--copy-from`; `copy_from=`): the earlier
+project's boundary, HUC12s, level A, level B, soils and watershed data are
+copied into the new folder (not the routing cache, the DEM tiles, the
+merged layers, the logs or the report), every path in its project.json is
+moved to the new folder, and the run carries on from there as a resumed
+project would: only what is not done yet runs (a failed data step or
+HUC12, a new option such as the 3 m pilot), then the merged layers, the
+summary, the synthesis and RESULTS.md are made in the new folder. The
+earlier folder is only read. A copy of a whole field office is some GB
+on the same drive.
+
 ### Portable: everything on one drive (v0.33)
 
 `setup_portable.bat` builds `env` (Python and every library) inside the

@@ -1615,6 +1615,7 @@ def run_project(
     fine_huc12s: str | None = None,
     fine_count: int = 3,
     fine_cell_m: float = 3.0,
+    copy_from: str | None = None,
 ) -> dict[str, Any]:
     """A whole project area, any size: valleys everywhere, channels on lidar.
 
@@ -1663,6 +1664,9 @@ def run_project(
     ``fine_cell_m`` (3 m) for ``fine_count`` headwater HUC12s, one per
     setting (mountain, fans and piedmonts, alluvial valley), and compares
     each with the 10 m pass; ``"listed"`` takes ``fine_huc12s`` instead.
+    ``copy_from`` starts a new project folder from an earlier one: its
+    level A, level B, soils and data are copied (the earlier folder is only
+    read) and this run carries on from them.
     """
     from .project import run_project as _rp
 
@@ -1679,7 +1683,7 @@ def run_project(
                sensitivity_weights=sensitivity_weights,
                level_a_cell_m=level_a_cell_m, fine_valleys=fine_valleys,
                fine_huc12s=fine_huc12s, fine_count=fine_count,
-               fine_cell_m=fine_cell_m)
+               fine_cell_m=fine_cell_m, copy_from=copy_from)
 
 
 def check_services(timeout: int = 20) -> dict[str, Any]:

@@ -352,6 +352,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--fine-count", type=int, default=3)
     s.add_argument("--fine-cell", type=float, default=3.0,
                    help="cell size of the finer valley pass, m (default 3)")
+    s.add_argument("--copy-from", default=None,
+                   help="start this new project folder from an earlier one: "
+                        "its level A, level B, soils and data are copied (the "
+                        "earlier folder is only read) and the run carries on")
 
     sub.add_parser("backends", help="show which flow-routing backends are installed")
     s = sub.add_parser("history", help="what has been run in this output directory")
@@ -648,7 +652,8 @@ def main(argv: list[str] | None = None) -> int:
                 sensitivity_weights=args.weights,
                 level_a_cell_m=args.cell_a,
                 fine_valleys=args.fine_valleys, fine_huc12s=args.fine_huc12s,
-                fine_count=args.fine_count, fine_cell_m=args.fine_cell)
+                fine_count=args.fine_count, fine_cell_m=args.fine_cell,
+                copy_from=args.copy_from)
             _print({"project": r.get("project"),
                     "results": str(out / "RESULTS.md"),
                     "huc12_summary": r.get("huc12_summary"),

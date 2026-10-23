@@ -990,6 +990,7 @@ def run_project(boundary: str, where: str | None = None,
                 fine_huc12s: str | list | None = None,
                 fine_count: int = 3,
                 fine_cell_m: float = 3.0,
+                copy_from: str | None = None,
                 timeout: int = 120,
                 guard: Guard | None = None) -> dict[str, Any]:
     """Level A over the whole area, level B by HUC12, merged layers, a
@@ -1018,7 +1019,10 @@ def run_project(boundary: str, where: str | None = None,
     again on those HUC12s' lidar at ``fine_cell_m`` (3 m), compared with
     the 10 m pass in RESULTS.md and ``A_fine/comparison_3m.csv``, merged as
     ``valley_types_3m`` and ``valley_extent_3m``.
-    Resumes a project folder that already has a ``project.json``."""
+    ``copy_from``: an earlier project folder to start a new one from (its
+    level A, level B, soils and data are copied, never changed; this run
+    carries on from them). Resumes a project folder that already has a
+    ``project.json``."""
     import geopandas as gpd
 
     pilot_by = (pilot_by or "representative").lower()
@@ -1029,6 +1033,11 @@ def run_project(boundary: str, where: str | None = None,
     guard = guard or Guard.from_env()
     root = Path(guard.out_dir)
     root.mkdir(parents=True, exist_ok=True)
+    if copy_from and not (root / "project.json").exists():
+        copy_project(guard.read_path(copy_from), root)
+    elif copy_from:
+        note(f"project: {root} already has a project.json; carrying on from "
+             f"it (the folder to start from, {copy_from}, is not used)")
     st = _Status(root)
     t0 = time.monotonic()
     from . import api
@@ -1480,6 +1489,112 @@ def _level_b(code, row, root: Path, dem_a: str, pa: dict, curve,
     except Exception as exc:                                 # noqa: BLE001
         return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:500],
                 "seconds": round(time.monotonic() - t0, 1)}
+
+
+# -- a project started from an earlier one (v0.43) -----------------------------------
+#
+# Sam, 23 Oct 2026: "don't overwrite 42, call the new version 43". The
+# fixes and the 3 m pilot need none of level A's two hours or level B's
+# twenty, so a new folder can start from an earlier project's measurements:
+# copied, with every path in project.json moved, the earlier folder only
+# read. The caches, the 1 m tiles, the merged layers, the logs and the
+# report are not copied; this run rebuilds them.
+
+# The plots are most of a level B folder's files (Kingman: ~1,800 per
+# HUC12, ~190,000 in all) and nothing after level B reads them: they stay
+# in the earlier folder, where the layers' plot_path still points.
+COPY_SKIP_DIRS = {"dem_tiles", ".geolens_cache", "__pycache__", "runs",
+                  "section_plots", "reach_plots"}
+COPY_SKIP_TOP = {"merged", "review", "A_fine"}
+
+
+def _moved_paths(obj, src: Path, root: Path):
+    """Every string in a project.json that is a path under ``src``, moved
+    under ``root`` (Windows paths compared without case)."""
+    a, b = str(src).rstrip("\\/"), str(root)
+    al = a.lower().replace("/", "\\")
+
+    def move(s):
+        if isinstance(s, str):
+            sl = s.lower().replace("/", "\\")
+            if sl.startswith(al) and (len(s) == len(a) or s[len(a)] in "\\/"):
+                return b + s[len(a):]
+        return s
+
+    if isinstance(obj, dict):
+        return {k: _moved_paths(v, src, root) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_moved_paths(v, src, root) for v in obj]
+    return move(obj)
+
+
+def copy_project(src: str | Path, root: str | Path) -> dict:
+    """Start the project folder ``root`` from the earlier project ``src``:
+    its boundary, HUC12s, level A, level B, soils and watershed data are
+    copied and its project.json written here with every path moved, so the
+    next run carries on from them. ``src`` is only read."""
+    src, root = Path(src), Path(root)
+    rs, rr = src.resolve(), root.resolve()
+    if rs == rr:
+        raise GeolensError("A project cannot be started from itself.")
+    if rs in rr.parents:
+        raise GeolensError(f"The new project folder {root} is inside the "
+                           f"one it is copied from ({src}).")
+    pj = src / "project.json"
+    if not pj.exists():
+        raise GeolensError(f"{src} has no project.json: not a geolens project "
+                           f"folder to start from.")
+    if (root / "project.json").exists():
+        raise GeolensError(f"{root} already has a project.json; it carries on "
+                           f"from that, not from {src}.")
+    old = json.loads(pj.read_text(encoding="utf-8"))
+    # The paths inside are written as that run saw its folder (a drive
+    # letter, not the network path it may resolve to): take its own root.
+    first = ((old.get("steps") or {}).get("boundary") or {}).get("path")
+    old_root = os.path.dirname(first) if first else str(src)
+    files = list(_project_files(src))
+    total = sum(p.stat().st_size for p in files)
+    note(f"project: copying {len(files):,} files ({total / 1e9:.1f} GB) from "
+         f"{src} (that folder is only read)")
+    done = 0
+    for p in progress(files, label="copying the earlier project"):
+        dst = root / p.relative_to(src)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(p, dst)
+        done += 1
+    new = _moved_paths(old, Path(old_root), root)
+    for k in ("synthesis", "fine_valleys", "copied_from"):
+        new.pop(k, None)
+    rec = {"project": str(src), "at": _now(), "files": done,
+           "gb": round(total / 1e9, 2)}
+    new["copied_from"] = rec
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "project.json").write_text(json.dumps(new, indent=1, default=str),
+                                       encoding="utf-8")
+    return rec
+
+
+def _project_files(src: Path):
+    for dirpath, dirnames, filenames in os.walk(src):
+        here = Path(dirpath)
+        top = here == src
+        dirnames[:] = [d for d in dirnames if d not in COPY_SKIP_DIRS
+                       and not (top and (d in COPY_SKIP_TOP or d.startswith(".")))]
+        for f in filenames:
+            if top and not f.lower().endswith(".gpkg"):
+                continue              # project.json is rewritten; the rest is this run's
+            yield here / f
+
+
+def _copied_lines(rec: dict | None) -> list[str]:
+    if not rec:
+        return []
+    return [f"Level A, level B, the soils and the watershed data were copied "
+            f"from `{rec.get('project')}` on {rec.get('at')} "
+            f"({rec.get('files', 0):,} files, {rec.get('gb')} GB) and carried on "
+            f"from here; that folder was not changed. The level B plots were "
+            f"not copied: `plot_path` in the stream layers still points to "
+            f"them there.", ""]
 
 
 # -- valleys on the lidar at a finer cell (v0.43) -------------------------------------
@@ -1944,6 +2059,7 @@ def _report(root: Path, st: _Status, merged: dict, cell_a: float,
         f"{LEVEL_B_CELL_M:g} m lidar | only HUC12s marked done in "
         f"`huc12_status` |", "",
         f"Regional bankfull curve: `{curve}` ({why_curve}).", "",
+        *_copied_lines(st.data.get("copied_from")),
         "## How far to trust the 10 m DEM", "",
         "Measured where 3DEP has no lidar: the 10 m DEM against 6,156 "
         "ICESat-2 ground points in northern Arizona (October 2026).", "",

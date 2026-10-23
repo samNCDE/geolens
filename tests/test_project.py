@@ -845,3 +845,52 @@ def test_valleys_again_on_the_lidar_at_3_m_for_a_pilot(stubs, tmp_path):
     again = project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
     assert len(stubs["fetch"]) == fetched, "nothing fetched again"
     assert Path(again["valley_types_3m"]).exists()
+
+
+def test_a_new_project_starts_from_an_earlier_one_without_changing_it(stubs,
+                                                                     tmp_path):
+    """Sam, 23 Oct: "don't overwrite 42, call the new version 43". A new
+    folder starts from the earlier project's measurements: copied, every
+    path in project.json moved, nothing re-fetched or re-run that was done,
+    the earlier folder untouched; this run's own steps (here the 3 m
+    pilot) and the merged layers and report are made in the new folder."""
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["field office"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    v42 = tmp_path / "geolens_v42"
+    kw = dict(level_b="pilot", pilot_count=1, stream_threshold_km2=3.0,
+              geology=None, section_plots=False, soils=False, data="none")
+    project.run_project(str(bnd), guard=Guard(out_dir=v42), **kw)
+    before = {p: p.stat().st_mtime_ns for p in v42.rglob("*") if p.is_file()}
+    fetched = list(stubs["fetch"])
+
+    v43 = tmp_path / "geolens_v43"
+    res = project.run_project(str(bnd), guard=Guard(out_dir=v43),
+                              copy_from=str(v42), fine_valleys="pilot",
+                              fine_count=1, **kw)
+    # the earlier project was only read
+    after = {p: p.stat().st_mtime_ns for p in v42.rglob("*") if p.is_file()}
+    assert after == before
+    # nothing done there was fetched or run again: only the 3 m tile
+    assert stubs["fetch"][:len(fetched)] == fetched
+    assert stubs["fetch"][len(fetched):] == ["1m"]
+    status = json.loads((v43 / "project.json").read_text())
+    assert status["copied_from"]["project"] == str(v42)
+    text = json.dumps({k: v for k, v in status.items() if k != "copied_from"})
+    assert str(v42) not in text, "every path moved to the new folder"
+    assert str(v43) in text
+    assert status["huc12"]["150100000101"]["status"] == "done"
+    assert Path(status["huc12"]["150100000101"]["stream_types"]).exists()
+    assert Path(res["valley_types"]).parent == v43 / "merged"
+    assert Path(res["valley_types_3m"]).exists()
+    report = (v43 / "RESULTS.md").read_text()
+    assert "copied from" in report and "was not changed" in report
+    assert not (v43 / "merged" / "huc12_status.gpkg").samefile(
+        v42 / "merged" / "huc12_status.gpkg")
+
+    # a folder cannot start from itself, nor from a non-project
+    with pytest.raises(GeolensError):
+        project.copy_project(v42, v42)
+    with pytest.raises(GeolensError):
+        project.copy_project(tmp_path / "boundary_dir_missing", tmp_path / "x")

@@ -973,6 +973,8 @@ class RunProject(_Tool):
             P("Which features of it (where clause)", "where", "GPString",
               required=False),
             P("Project folder", "out_folder", "DEFolder"),
+            P("Start from an earlier project folder (copied, never changed)",
+              "copy_from", "DEFolder", required=False),
             P("Level B (stream types on lidar)", "level_b", "GPString",
               default=self.LEVEL_B[0][0], choices=[c[0] for c in self.LEVEL_B]),
             P("Pilot HUC12s", "pilot", "GPLong", default=3),
@@ -1029,6 +1031,19 @@ class RunProject(_Tool):
         if v["boundary"].value is None and not ga.text(v["url"]):
             v["url"].setWarningMessage("Give a boundary layer or a map "
                                        "service layer URL.")
+        src, out = ga.text(v["copy_from"]), ga.text(v["out_folder"])
+        if src:
+            if not os.path.isfile(os.path.join(src, "project.json")):
+                v["copy_from"].setErrorMessage(
+                    "Not a geolens project folder (no project.json).")
+            elif out and os.path.normcase(os.path.abspath(src)) == \
+                    os.path.normcase(os.path.abspath(out)):
+                v["copy_from"].setErrorMessage(
+                    "Pick a new project folder to copy into.")
+            elif out and os.path.isfile(os.path.join(out, "project.json")):
+                v["copy_from"].setWarningMessage(
+                    "The project folder already has a project.json: the run "
+                    "carries on from that, and this folder is not used.")
 
     def execute(self, parameters, messages):
         v = ga.by_name(parameters)
@@ -1063,6 +1078,7 @@ class RunProject(_Tool):
                                if v["cell_a"].value and
                                float(v["cell_a"].value) > 10.0 else None),
             "fine_valleys": ga.choice(v["fine"], self.FINE) or "none",
+            "copy_from": ga.text(v["copy_from"]) or None,
         }, out, "project")
         arcpy.AddMessage("level B: %s" % res.get("level_b"))
         arcpy.AddMessage("results: %s" % os.path.join(out, "RESULTS.md"))
