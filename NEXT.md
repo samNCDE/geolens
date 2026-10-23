@@ -3,26 +3,28 @@
 **Start with [OVERVIEW.md](OVERVIEW.md)** — what the tool does, how to run it,
 and what to trust. This file is the working log behind it.
 
-## Pick up here (state on 23 Oct 2026, Friday midday Arizona)
+## Pick up here (state on 23 Oct 2026, Friday 2:30 pm Arizona)
 
-**State.** v0.44.0 beta. **Work only on drive S:** (Sam's instruction; C:
+**State.** v0.45.1 beta (v0.45.0's code; the v43 run uses v0.45.0 in `gl45`). **Work only on drive S:** (Sam's instruction; C:
 is nearly full). The toolbox folders `S:\geolens\gl33` (the one in Sam's
 kingman ArcGIS project) and `S:\geolens\gl42` both get each release's
-changed files, never while a run uses them. Zips and git bundles are in
-`S:\geolens\Claude outputs`.
+changed files, never while a run uses them; `gl44` and `gl45` are frozen
+copies the v43 runs use (never change gl45 while v43 runs). Zips, git
+bundles and the two v0.45 PDFs are in `S:\geolens\Claude outputs`.
 
 **Pick up here.**
-- `S:\kingman\geolens_v42` is the Kingman deliverable so far (v0.42.1,
-  whole field office, finished 23 Oct 12:15 am AZ); `geolens_v38` is
-  superseded. Review in the v0.43.0 entry below and in the project doc
-  `claude/geolens_status.md`.
-- On 23 Oct (~11:30 am AZ) the project tool ran into a new folder,
-  `S:\kingman\geolens_v43`, started from `geolens_v42` (copied; v42 is
-  Sam's to review and is never written) with v0.43.1 and the 3 m valley
-  pilot (see the v0.43.0 and v0.43.1 entries). After it:
-  review the pilot's comparison (RESULTS.md *Valleys on the lidar at
-  3 m*), then the validation sample for Sam, the form rules for the
-  "check" combinations and the sensitivity weights with him.
+- `S:\kingman\geolens_v42` (v0.42.1) is the deliverable Sam is reviewing;
+  never written. Its stream types and form are provisional: its level B
+  mosaics had holes (v0.45.0 entry).
+- `S:\kingman\geolens_v43` was restarted 23 Oct 2:24 pm AZ with v0.45.0
+  (`S:\kingman\run_geolens_v43.bat`, code in `gl45`): level B measured
+  again on whole mosaics for 236 HUC12s (32 kept, 4 failed retried), the
+  breaks recalibrated, then the 3 m valley pass on every HUC12 with lidar,
+  six at a time, the 1 m DEMs kept. Expected to finish Saturday 24 Oct
+  afternoon or evening. Check-ins: the scheduled task at 4:50 pm AZ, then
+  every ~12 h. After it: report level B against v42 and the 10 m vs 3 m
+  comparison, then add the layers with *Add a project's results to the
+  map*.
 - Done since: the methods write-up (v0.40, `docs/`), the reconnaissance
   option, the GitHub workflow and the NHD names on the major streams
   (v0.41; the workflow and the NHD fetch untested live); every reach
@@ -144,6 +146,19 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.45.1 (beta): ArcGIS Pro and its launcher on the front page
+
+Sam, 23 Oct, 4:45 pm AZ: "update the github to show instructions for the
+arcgis pro launcher". README.md has a new section near the top, *Run it from
+ArcGIS Pro*: setting up the toolbox, running a project area, the launcher
+(*Run in its own window*: `geolens_run.json` and `run_geolens.bat` in the
+project folder, what to do after a stop, five tries, one run per folder,
+never replacing a release folder a run uses), *Check on a project run* and
+*Add a project's results to the map*. The 3-page overview
+(`docs/geolens_overview_v0.45.md` and `.pdf`) is in the release; the
+documentation table points to the v0.45 PDFs. No code change besides the
+version.
 
 ## v0.45.0 (beta): whole 1 m mosaics; long runs from the toolbox
 

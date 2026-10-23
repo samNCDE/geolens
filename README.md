@@ -6,8 +6,11 @@ types, and judges whether each reach's stream type is a **stable or unstable
 form for its valley**. Every channel section it measures comes with a plot you
 can click on the map.
 
-*Beta (v0.42). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
+*Beta (v0.45). Open source (MIT). Runs in ArcGIS Pro, in a Jupyter notebook,
 or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
+
+**New to it? Start with [Run it from ArcGIS Pro](#run-it-from-arcgis-pro)
+below, or the 3-page overview `docs/geolens_overview_v0.45.pdf`.**
 
 ---
 
@@ -35,10 +38,89 @@ or in QGIS. Windows first; the Python package also runs on macOS and Linux.*
 | Gullies, headcuts | **Experimental.** |
 | Sentinel-1 radar statistics | **New; tested offline only.** For an experiment, not yet a classification. |
 | SSURGO soils as geology | **New; tested offline only.** Compare its valley types with the USGS geology's before relying on it. |
-| Project runs (by HUC12) | **Run twice on the Kingman Field Office** (41,000 km², 446 HUC12s); the second run on every HUC12 with lidar. |
+| Project runs (by HUC12) | **Run on a whole BLM field office** (41,000 km², 446 HUC12s), level B on every HUC12 with lidar. Since v0.45 the 1 m lidar mosaics are whole where lidar projects overlap or meet at a UTM zone line (earlier runs had holes there). |
 | Stream power, major streams, sensitivity table | **New; checked on the first Kingman run's reaches.** Stream power is an index from a curve and a 10 m slope, for comparing reaches. The sensitivity weights are a first proposal. |
 
 The reasons, with the numbers behind them, are in [START_HERE.md](START_HERE.md).
+
+## Run it from ArcGIS Pro
+
+### Set up once
+
+1. Unzip the release into a folder of its own, for example
+   `Documents\Tools\geolens` or a folder on a data drive. Each new release
+   goes in a new folder: a run that is working uses the files of the
+   release it was started from.
+2. Double-click **`install_windows.bat`** (or **`setup_portable.bat`** for a
+   portable drive; see [Install](#install-windows)).
+3. In ArcGIS Pro, in the **Catalog** pane, right-click **Toolboxes ▸ Add
+   Toolbox** and choose **`arcgis_toolbox\geolens.pyt`** in the release
+   folder.
+4. Run **0 Setup ▸ Find the geolens environment**. It should report
+   "geolens 0.45.1 found". If not, give it the `python.exe` the installer
+   printed; it remembers it.
+5. Optional: **0 Setup ▸ Check internet services** says which download
+   services this computer can reach.
+
+### Run a project area
+
+1. Open **1 Whole routine ▸ Run a project area (by HUC12)**.
+2. Give it a **boundary** layer (a ranch, an allotment, a district), or a
+   **map service layer URL** and a **where clause** (for a BLM field office:
+   `https://gis.blm.gov/arcgis/rest/services/admin_boundaries/BLM_Natl_AdminUnit/MapServer/3`
+   with `ADM_UNIT_CD='XXX00000'`), and a new, empty **project folder**.
+3. Choose **Level B**: *Every HUC12 with lidar* for the full product, or a
+   pilot for a first look. Leave *Valley material* on SSURGO soils and
+   *Watershed data* on All.
+4. For anything that takes hours (a field office: about a day), tick
+   **Run in its own window**. Under *Options* you can also map the valleys
+   again on the lidar at 3 m (*Valleys again on the lidar*), keep each
+   HUC12's 1 m DEM, or start from an earlier project folder without
+   changing it.
+5. Click **Run**. With *Run in its own window* the tool finishes in a few
+   seconds and a black console window titled *geolens project … - leave
+   open* does the work (the launcher, below).
+
+### The launcher: a run in its own window
+
+*Run in its own window* writes the run's settings into the project folder
+(`geolens_run.json`) with a launcher beside them, **`run_geolens.bat`**, and
+starts the launcher in a console window of its own.
+
+- **Leave the console window open.** Closing it stops the run; everything
+  finished so far is kept.
+- **ArcGIS Pro is free** while it works, and can be closed: the run does not
+  depend on it.
+- **After a reboot, a crash or a power cut, double-click `run_geolens.bat`**
+  in the project folder. The run carries on from the last finished step or
+  HUC12; nothing done is redone.
+- If geolens stops with an error, the launcher waits a minute and carries
+  on, up to five times. It will not start while another run is working in
+  the same folder.
+- It runs the code in the release folder the toolbox came from, so do not
+  unzip a new release over that folder while a run uses it.
+- For a run of a day or more: pause Windows Update, keep the computer
+  plugged in. geolens asks Windows not to sleep while it works.
+- The same run from a command window:
+  `python -m geolens.job <project folder>\geolens_run.json`.
+
+### While it runs, and when it has finished
+
+- **1 Whole routine ▸ Check on a project run** (any time, on the project
+  folder): whether a run is working there now, the steps done, the HUC12s
+  done, failed and still to go, roughly how many hours are left, and the
+  free space. It only reads the folder. From a command window:
+  `geolens status <project folder>`.
+- **1 Whole routine ▸ Add a project's results to the map** (when it has
+  finished): the valley types, the valley extent polygons coloured like
+  them, stream types, stable / unstable form, major streams and the HUC12
+  summary, sensitivity and status, named and coloured. Run it again to
+  re-colour; nothing is added twice.
+- Read **`RESULTS.md`** in the project folder first: what ran at what
+  resolution, how far to trust it, and every warning.
+
+Step by step, with every option and what to do when something goes
+wrong: [`docs/geolens_how_to_use.pdf`](docs/geolens_how_to_use.pdf).
 
 ## Install (Windows)
 
@@ -53,7 +135,7 @@ You need admin rights on the machine, and either Miniforge/Anaconda or Python
    later updates the code in place and leaves the environment alone.
 3. In ArcGIS Pro: **Catalog ▸ Toolboxes ▸ Add Toolbox ▸
    `arcgis_toolbox\geolens.pyt`**, then run **0 Setup ▸ Find the geolens
-   environment**.
+   environment** ([Run it from ArcGIS Pro](#run-it-from-arcgis-pro)).
 
 Nothing is installed into ArcGIS Pro's own Python. The tools run geolens in
 the environment the installer built, so a DEM too big for memory cannot crash
@@ -99,7 +181,8 @@ laptop.
   fit, and save your own NASA Earthdata login (for radar).
 - **1 Whole routine**: every step in one tool, optionally clipped to one
   watershed first; or **Run a project area (by HUC12)** for any boundary,
-  however large.
+  however large, in its own window for long runs; **Check on a project
+  run**; and **Add a project's results to the map**.
 - **2 Steps**: the same steps one at a time. Step 1 does the routing once;
   later steps read the run folder, so any step can be redone alone.
 - **3 More tools**: alluvial fans, watershed clipping, headcuts, section
@@ -143,7 +226,9 @@ See [RUNNING.md](RUNNING.md).
 | [START_HERE.md](START_HERE.md) (`.html`) | Colleagues: what it does, install, run, read the results, what to trust. |
 | [RUNNING.md](RUNNING.md) | Every step and parameter, the toolbox internals, tuning tables. |
 | [OVERVIEW.md](OVERVIEW.md) | How each step works and why. |
-| `docs/geolens_technical_summary_v0.40.pdf` | Methods and references. |
+| [`docs/geolens_overview_v0.45.pdf`](docs/geolens_overview_v0.45.pdf) | How the latest version works, in three pages. |
+| [`docs/geolens_how_to_use.pdf`](docs/geolens_how_to_use.pdf) | Step by step: install, the ArcGIS Pro tools and the launcher, reading the results, troubleshooting. |
+| [`docs/geolens_methods_v0.45.pdf`](docs/geolens_methods_v0.45.pdf) | Methods and references (replaces the v0.40 technical summary). |
 | [docs/ARCGIS_TEST_CHECKLIST.md](docs/ARCGIS_TEST_CHECKLIST.md) | A 30-minute first run of every toolbox tool, and what to report. |
 | [NEXT.md](NEXT.md) | Working log: what changed in each version, known weaknesses, what is next. |
 | [docs/SAR_FEASIBILITY.md](docs/SAR_FEASIBILITY.md) | Whether Sentinel-1 radar separates riparian woodland from irrigated fields, and the experiment that decides it. |

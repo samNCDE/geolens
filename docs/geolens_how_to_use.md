@@ -21,7 +21,7 @@ date: "Version 0.45 (beta), October 2026"
 ## 1.2 Add the toolbox to ArcGIS Pro
 
 1. In the Catalog pane, right-click *Toolboxes ▸ Add Toolbox* and choose `arcgis_toolbox\geolens.pyt` in the release folder.
-2. Run *0 Setup ▸ Find the geolens environment*. It should report "geolens 0.45.0 found". If it cannot find the environment, give it the `python.exe` the installer printed; it remembers it.
+2. Run *0 Setup ▸ Find the geolens environment*. It should report "geolens 0.45.1 found". If it cannot find the environment, give it the `python.exe` the installer printed; it remembers it.
 3. Run *0 Setup ▸ Check internet services* once on a new computer or network: it says which of the download services this machine can reach.
 4. Only for the Sentinel-1 radar tool: *0 Setup ▸ Save Earthdata login* with your own free NASA Earthdata account. The password goes into your Windows profile, never into geolens or its records.
 
