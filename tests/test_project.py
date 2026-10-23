@@ -72,9 +72,15 @@ def stubs(monkeypatch, tmp_path):
         dst = out / "dem_mosaic.tif"
         shutil.copyfile(DEM, dst)
         (out / "dem_tiles").mkdir(exist_ok=True)
+        from geolens.dem_fetch import FETCH_VERSION
+
+        (out / "dem_sources.json").write_text(json.dumps(
+            {"fetch_version": FETCH_VERSION, "coverage": 1.0,
+             "area_coverage": 0.97, "tiles": []}))
         calls["fetch"].append(source)
         calls.setdefault("res", []).append(resolution_m)
         return {"dem": str(dst), "coverage": 1.0, "lidar_fraction": 1.0,
+                "area_coverage": 0.97, "fetch_version": FETCH_VERSION,
                 "cell_size_m": 30.0, "crs": UTM, "warnings": []}
 
     def data_step(step, root, inside, st, timeout):
@@ -880,9 +886,9 @@ def test_a_new_project_starts_from_an_earlier_one_without_changing_it(stubs,
     # the earlier project was only read
     after = {p: p.stat().st_mtime_ns for p in v42.rglob("*") if p.is_file()}
     assert after == before
-    # nothing done there was fetched or run again: only the 3 m tile
-    assert stubs["fetch"][:len(fetched)] == fetched
-    assert stubs["fetch"][len(fetched):] == ["1m"]
+    # nothing done there was fetched or run again, and the 3 m pass used the
+    # pilot's 1 m mosaic level B kept (copied with it) instead of a download
+    assert stubs["fetch"] == fetched
     status = json.loads((v43 / "project.json").read_text())
     assert status["copied_from"]["project"] == str(v42)
     text = json.dumps({k: v for k, v in status.items() if k != "copied_from"})
@@ -1004,3 +1010,235 @@ def test_one_run_at_a_time_per_project_folder(tmp_path, monkeypatch):
     project._take_lock(root)                       # the dead run's lock
     assert (root / "run.lock").read_text().split()[0] == str(__import__("os").getpid())
     project._take_lock(root)                       # this process again: fine
+
+
+def test_a_busy_folder_is_its_own_error(tmp_path, monkeypatch):
+    """The launcher must not retry a run refused for another one working in
+    the folder: that refusal is ProjectBusy, a GeolensError."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "run.lock").write_text("424242 2026-10-23T00:00:00Z\n")
+    monkeypatch.setattr(project, "_pid_alive", lambda pid: True)
+    with pytest.raises(project.ProjectBusy):
+        project._take_lock(root)
+    assert issubclass(project.ProjectBusy, GeolensError)
+
+
+def test_saving_tries_again_when_windows_refuses_the_replace(tmp_path,
+                                                             monkeypatch):
+    """Windows will not replace project.json while another program has it
+    open; a run of days waits a moment and tries again."""
+    st = project._Status(tmp_path)
+    st.data["x"] = 1
+    real, refusals = Path.replace, []
+
+    def replace(self, target):
+        if len(refusals) < 2:
+            refusals.append(target)
+            raise PermissionError(13, "in use")
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+    monkeypatch.setattr(project.time, "sleep", lambda s: None)
+    st.save()
+    assert len(refusals) == 2
+    assert json.loads((tmp_path / "project.json").read_text())["x"] == 1
+
+
+def _status_folder(tmp_path, at=True, lock_pid=None):
+    """A project folder part way through the office-wide lidar valley pass."""
+    root = tmp_path / "kingman_like"
+    root.mkdir()
+    now = project.time.time()
+    huc = {f"1501000001{i:02d}": {"status": "done"} for i in range(10)}
+    huc["150100000199"] = {"status": "no lidar"}
+    huc["150100000198"] = {"status": "failed", "error": "x"}
+    recs = {}
+    for i, code in enumerate(sorted(huc)[:6]):
+        r = {"status": "done", "seconds": 1800.0}
+        if at:
+            r["at"] = project._iso(now - 3600 * (5 - i))
+        recs[code] = r
+    recs["150100000106"] = {"status": "failed", "error": "MemoryError: x",
+                            "seconds": 60.0}
+    data = {"steps": {"boundary": {"status": "done"}, "pass_a": {"status": "done"},
+                      "data_fire": {"status": "done"}},
+            "huc12": huc, "warnings": ["first", "the last one"],
+            "copied_from": {"project": "S:\\kingman\\geolens_v42"},
+            "fine_valleys": {"mode": "all", "cell_m": 3.0, "workers": 3,
+                             "chosen": ["150100000100", "150100000101"],
+                             "huc12": recs}}
+    (root / "project.json").write_text(json.dumps(data))
+    if lock_pid:
+        (root / "run.lock").write_text(f"{lock_pid} 2026-10-23T20:00:00Z\n")
+    return root
+
+
+def test_how_far_a_run_has_got(tmp_path, monkeypatch):
+    """What the check-ins read by hand: a run working now, the pass done /
+    failed / to go (11 HUC12s with lidar, the one without excluded), its
+    pace from when each HUC12 finished, and the free space."""
+    import os
+
+    monkeypatch.setattr(project, "_free_gb", lambda p: 812.4)
+    root = _status_folder(tmp_path, lock_pid=os.getpid())
+    s = api.project_status(str(root))
+    assert s["running"] and s["pid"] == os.getpid()
+    f = s["fine_valleys"]
+    assert (f["total"], f["done"], f["failed"], f["left"]) == (11, 6, 1, 4)
+    assert f["pilot_done"] == 2 and f["workers"] == 3
+    assert f["per_hour"] == pytest.approx(6 / 5, rel=0.01)      # 6 in the last 5 h
+    assert f["hours_left"] == pytest.approx(4 / 1.2, rel=0.02)
+    assert f["failed_huc12s"] == {"150100000106": "MemoryError: x"}
+    assert s["level_b"] == {"done": 10, "no lidar": 1, "failed": 1}
+    assert s["copied_from"] == "S:\\kingman\\geolens_v42"
+    assert "warnings" not in s and s["project_warnings"][-1] == "the last one"
+    text = "\n".join(s["lines"])
+    assert "A run is working in it now" in text
+    assert "6 of 11 HUC12s done, 1 failed, 4 to go, 3 at a time" in text
+    assert "pilot 2 of 2 done" in text
+    assert "812.4 GB" in text and "the last one" in text
+
+
+def test_a_stopped_run_and_records_without_finish_times(tmp_path, monkeypatch):
+    """No live process behind the lock: not running, and carry on by running
+    again. Records from v0.44 have no finish times: each HUC12's own time
+    shared among the workers gives the pace."""
+    monkeypatch.setattr(project, "_free_gb", lambda p: 100.0)
+    monkeypatch.setattr(project, "_pid_alive", lambda pid: False)
+    root = _status_folder(tmp_path, at=False, lock_pid=424242)
+    s = project.project_status(root)
+    assert not s["running"]
+    assert s["fine_valleys"]["per_hour"] == pytest.approx(3 * 3600 / 1800)
+    assert "No run is working in it now" in s["lines"][1]
+    assert any("run the project again" in line for line in s["lines"])
+    with pytest.raises(GeolensError, match="no project.json"):
+        project.project_status(tmp_path / "nothing_here")
+
+
+def test_the_status_command(tmp_path, monkeypatch, capsys):
+    from geolens import cli
+
+    monkeypatch.setattr(project, "_free_gb", lambda p: 100.0)
+    root = _status_folder(tmp_path)
+    assert cli.main(["status", str(root)]) == 0
+    out = capsys.readouterr().out
+    assert "HUC12s done" in out and "Free space" in out
+    assert cli.main(["status", str(root), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["fine_valleys"]["total"] == 11
+
+
+def test_a_call_run_from_a_settings_file(tmp_path, monkeypatch):
+    """What the launcher runs: the call in geolens_run.json, its result
+    beside it; exit 3 when another run has the folder (no retry), 1 on an
+    error (retried), 2 when the settings cannot be read."""
+    from geolens import job
+
+    seen = []
+
+    def fake(a, b=2):
+        seen.append((a, b))
+        return {"project": "p", "_hidden": 1, "n": a + b}
+
+    monkeypatch.setattr(api, "fake_call", fake, raising=False)
+    out = tmp_path / "proj"
+    settings = job.write_settings("fake_call", {"a": 1, "b": 5}, out, by="test")
+    assert job.main([str(settings)]) == 0
+    assert seen == [(1, 5)]
+    res = json.loads((out / job.RESULT).read_text())
+    assert res["result"] == {"project": "p", "n": 6}
+    import os
+
+    assert os.environ["GEOLENS_OUT"] == str(out)
+
+    def busy(**k):
+        raise project.ProjectBusy("Another geolens run (process 1) is working")
+
+    monkeypatch.setattr(api, "fake_call", busy, raising=False)
+    assert job.main([str(settings)]) == job.EXIT_BUSY
+
+    def broken(**k):
+        raise RuntimeError("network")
+
+    monkeypatch.setattr(api, "fake_call", broken, raising=False)
+    assert job.main([str(settings)]) == job.EXIT_FAILED
+    (out / "bad.json").write_text("{not json")
+    assert job.main([str(out / "bad.json")]) == job.EXIT_SETTINGS
+    assert job.main([]) == job.EXIT_SETTINGS
+
+
+def _old_sources(dem_dir):
+    """dem_sources.json as a download before v0.45 left it: a tile skipped
+    on its footprint, no fetch_version."""
+    Path(dem_dir).mkdir(parents=True, exist_ok=True)
+    (Path(dem_dir) / "dem_sources.json").write_text(json.dumps(
+        {"coverage": 0.25, "tiles": [
+            {"title": "USGS 1 Meter 12 x23y399", "used": True, "cells": 0},
+            {"title": "USGS 1 Meter 11 x77y399", "used": False,
+             "why": "covered by newer tiles"}]}))
+
+
+def test_mosaics_made_with_holes_are_measured_again(stubs, tmp_path):
+    """v0.45: a 1 m mosaic made before the download fix, that skipped a
+    tile on its footprint, is not used again: the 3 m pass always redoes
+    its HUC12, level B only when asked (redo_lidar_holes; hours over a
+    field office). A HUC12 whose old mosaic skipped nothing is left alone,
+    and the 3 m pass uses level B's kept mosaic instead of a download."""
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["field office"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    out = tmp_path / "proj"
+    code = "150100000101"
+    kw = dict(level_b="pilot", pilot_count=1, stream_threshold_km2=3.0,
+              geology=None, section_plots=False, soils=False, data="none",
+              fine_valleys="listed", fine_huc12s=code)
+    project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    st = json.loads((out / "project.json").read_text())
+    rec = st["fine_valleys"]["huc12"][code]
+    assert rec["status"] == "done" and rec["fetch_version"] == 2
+    assert rec["lidar_data"] == 0.97
+    assert rec["dem_reused"].endswith(str(Path("B_huc12") / code / "dem" /
+                                          "dem_mosaic.tif")), rec
+    assert st["huc12"][code]["lidar_data"] == 0.97
+    fetched = len(stubs["fetch"])
+
+    # as if both had been made by v0.44
+    _old_sources(out / "B_huc12" / code / "dem")
+    _old_sources(out / "A_fine" / code / "dem")
+    for r in (st["huc12"][code], st["fine_valleys"]["huc12"][code]):
+        r.pop("fetch_version", None)
+    (out / "project.json").write_text(json.dumps(st))
+    project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    st = json.loads((out / "project.json").read_text())
+    assert st["fine_valleys"]["redone"] == [code]
+    assert st["fine_valleys"]["huc12"][code]["fetch_version"] == 2
+    assert "level_b_redone" not in st              # level B only when asked
+    assert len(stubs["fetch"]) == fetched + 1      # the 3 m pass's own download
+    assert "run again on a fixed 1 m mosaic" in (out / "RESULTS.md").read_text()
+
+    project.run_project(str(bnd), guard=Guard(out_dir=out),
+                        redo_lidar_holes=True, **kw)
+    st = json.loads((out / "project.json").read_text())
+    assert st["level_b_redone"] == [code]
+    assert st["huc12"][code]["status"] == "done"
+    assert st["huc12"][code]["fetch_version"] == 2
+    assert len(stubs["fetch"]) == fetched + 2      # level B's download, once
+    assert "measured again on a fixed 1 m" in (out / "RESULTS.md").read_text()
+    # done now: a further run redoes nothing
+    project.run_project(str(bnd), guard=Guard(out_dir=out),
+                        redo_lidar_holes=True, **kw)
+    assert len(stubs["fetch"]) == fetched + 2
+    st = json.loads((out / "project.json").read_text())
+    at = st["fine_valleys"]["huc12"][code]["at"]
+    # typed with other confinement breaks (level B run again moves the
+    # calibration): typed again, on the kept mosaic
+    st["fine_valleys"]["huc12"][code]["breaks"] = [0.5, 3.0]
+    (out / "project.json").write_text(json.dumps(st))
+    import time as _t
+
+    _t.sleep(1.1)
+    project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    st = json.loads((out / "project.json").read_text())
+    assert st["fine_valleys"]["huc12"][code]["at"] != at
+    assert len(stubs["fetch"]) == fetched + 2

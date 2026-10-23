@@ -145,6 +145,73 @@ From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
 
+## v0.45.0 (beta): whole 1 m mosaics; long runs from the toolbox
+
+**The 1 m mosaics had holes (found 23 Oct, 1:30 pm AZ, on the v43 run).**
+The first six HUC12s of the office-wide 3 m pass filled 14-70% of their
+mosaic grids, and their 3 m networks were 12-82% of the 10 m stream km.
+`fetch_dem` skipped a lidar tile when newer tiles' *footprints* covered
+it, but a 1 m tile's footprint is its 10 km square whatever the project
+flew. Kingman sits on the UTM 11/12 line (114 W): AZ_MohaveCoconino_D23
+delivered its western data in zone 11 tiles (x77...), which were skipped
+under that project's empty zone 12 tiles (x23, x24: 0 cells); and older
+projects (AZ_Mohave_D23, AZ_MohaveCounty_2021_D21, AZ_Yavapai_2021_B21)
+were skipped under newer ones' empty corners. Level B used the same
+download: 46 of the first 50 level B mosaics of v42 had skipped tiles; two
+of the four "failed" HUC12s (No channel sections could be sampled) were
+among them with 6-7% of their grid filled; and the many "unknown" reaches
+are partly this.
+
+- **`dem_fetch`**: a tile is skipped only when every cell it could fill
+  inside the area (and its footprint) already has data (`_cells_to_fill`);
+  the 1/3 arc-second fill for `source="best"` is offered over the whole
+  area and fills only what the lidar left empty. The result and
+  `dem_sources.json` carry `area_coverage` (the share of the area with
+  data), `lidar_share` and `fetch_version` 2; the "no 1 m lidar" warning
+  is measured, not taken from footprints.
+- **The 3 m pass redoes** any HUC12 whose mosaic was made with the bug
+  (`_mosaic_suspect`: no fetch_version and a tile "covered by newer
+  tiles"), never reuses such a mosaic, and redoes a HUC12 typed with
+  other confinement breaks than today's (level B run again moves the
+  calibration). It uses level B's kept 1 m mosaic when there is one
+  instead of downloading again. Records carry `lidar_data`,
+  `fetch_version`, `breaks` and `at`.
+- **`redo_lidar_holes`** (CLI `--redo-lidar-holes`, toolbox *Level B again
+  where the 1 m lidar mosaic had holes*): level B again for those HUC12s
+  (hours over a field office; `level_b_redone` in project.json).
+- RESULTS.md: the HUC12s with lidar over less than 90% of their area, and
+  the ones measured again.
+
+**Long runs from the toolbox (Sam: "build the improved functionality into
+the arc toolbox so it's easier for me to run later").**
+
+- *Run a project area* has **Run in its own window**: the call is written
+  into the project folder (`geolens_run.json`) with a launcher
+  (`run_geolens.bat`) and the launcher started in a console window of its
+  own (CREATE_NEW_CONSOLE, breaking away from Pro's job where allowed):
+  ArcGIS Pro stays free and the run is not tied to it. The launcher is the
+  v43 one made general: the environment's DLLs first, no GIS settings, the
+  release's own geolens (PYTHONPATH), up to five tries a minute apart,
+  none when another run has the folder (exit 3). `python -m geolens.job
+  <settings>` runs the call (`geolens/job.py`). The tool warns when every
+  HUC12 is asked for without it. Also on the tool: the lidar valleys' cell
+  size and HUC12s at once, and the level B redo.
+- **Check on a project run** (`api.project_status`, `geolens status
+  <folder>`): whether a run works in the folder now (run.lock and its
+  process), the steps, level B by status, the lidar valley pass (done,
+  failed, to go, the pace from when each HUC12 finished, hours left), free
+  space, the last warning. It only reads; project.json is opened with
+  delete sharing on Windows so the run can still replace it, and the run's
+  save tries again for 5 s if Windows refuses the replace anyway.
+- **Add a project's results to the map**: what add_v42_layers.py did, for
+  any project folder: summary, sensitivity, status, the valley extent
+  polygons coloured like the valley types (see-through fill, outline of
+  the same colour), valley types, the lidar valley layers at any cell,
+  stream types, stability, major streams, the review sample; names end
+  with the folder's name; run again, it re-colours without adding twice
+  and keeps on/off.
+- A run refused because another works in the folder raises `ProjectBusy`.
+
 ## v0.44.0 (beta): the lidar valley pass over a whole field office
 
 Sam, 23 Oct, 12:15 pm AZ: keep the 1 m DEMs, run the valleys on the lidar

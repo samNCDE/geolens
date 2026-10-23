@@ -1,6 +1,6 @@
 # geolens — start here
 
-*Version 0.30 (beta). What it does, how to run it (from ArcGIS Pro, Jupyter or
+*Version 0.45 (beta). What it does, how to run it (from ArcGIS Pro, Jupyter or
 QGIS), and how much to trust each result. About ten minutes to read.*
 
 geolens maps valley and channel form from a lidar DEM, built for the arid
@@ -129,7 +129,7 @@ ArcGIS.
    Add Toolbox* and choose `arcgis_toolbox\geolens.pyt` in the geolens
    folder.
 2. **Check it:** run *0 Setup ▸ Find the geolens environment*. It should
-   report "geolens 0.44.0 found". If it can't find the environment, give it
+   report "geolens 0.45.0 found". If it can't find the environment, give it
    the environment's `python.exe`, which the installer prints. The tool
    remembers it.
    *0 Setup ▸ Check internet services* says which download services this
@@ -149,6 +149,17 @@ ArcGIS.
    mouth (`major_streams`), and `huc12_sensitivity` ranks the HUC12s, with
    the weights written beside it for you to change. `RESULTS.md` in the
    folder says what ran at what resolution. Run it again to carry on.
+
+   **Long runs:** tick *Run in its own window*. The run goes on in a
+   console window of its own and ArcGIS Pro stays free; if it stops (a
+   reboot, a crash), double-click `run_geolens.bat` in the project folder
+   to carry on. *Check on a project run* says how far it has got and
+   roughly how long is left, and *Add a project's results to the map*
+   adds the finished layers, named and coloured. Under *Options*, *Valleys
+   again on the lidar* maps the valleys a second time on the 1 m lidar
+   resampled to 3 m (a pilot, or every HUC12 with lidar) and compares
+   them with 10 m; *Start from an earlier project folder* starts a new
+   folder from an earlier run's measurements without changing it.
 
    **Or run the whole routine** on one DEM (*1 Whole routine*), or **one step
    at a time** (*2 Steps*):
@@ -335,7 +346,10 @@ runs/                 what was run, with which settings, how long it took
 - [OVERVIEW.md](OVERVIEW.md): what each step does and what to trust, in more
   depth.
 - [RUNNING.md](RUNNING.md): every step and parameter, with tuning tables.
-- `docs/geolens_technical_summary_v0.40.pdf`: the methods and references,
-  including the bankfull method and the stable/unstable table.
+- `docs/geolens_how_to_use.pdf`: a step-by-step guide to running a
+  project and reading its results.
+- `docs/geolens_methods_v0.45.pdf`: the methods and references,
+  including the bankfull method, the stable/unstable table and the
+  project run.
 - [NEXT.md](NEXT.md): the working log — what changed in each version and what
   is known to be weak.

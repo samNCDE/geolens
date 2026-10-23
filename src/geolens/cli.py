@@ -359,6 +359,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="start this new project folder from an earlier one: "
                         "its level A, level B, soils and data are copied (the "
                         "earlier folder is only read) and the run carries on")
+    s.add_argument("--redo-lidar-holes", action="store_true",
+                   help="run level B again where the 1 m mosaic was made "
+                        "before v0.45 and could have holes (lidar projects "
+                        "that overlap or meet at a UTM zone line)")
+
+    s = sub.add_parser(
+        "status", help="how far a project run has got (it only reads the folder)")
+    s.add_argument("folder", help="the project folder")
+    s.add_argument("--json", action="store_true", help="everything, as JSON")
 
     sub.add_parser("backends", help="show which flow-routing backends are installed")
     s = sub.add_parser("history", help="what has been run in this output directory")
@@ -656,7 +665,8 @@ def main(argv: list[str] | None = None) -> int:
                 level_a_cell_m=args.cell_a,
                 fine_valleys=args.fine_valleys, fine_huc12s=args.fine_huc12s,
                 fine_count=args.fine_count, fine_cell_m=args.fine_cell,
-                fine_workers=args.fine_workers, copy_from=args.copy_from)
+                fine_workers=args.fine_workers, copy_from=args.copy_from,
+                redo_lidar_holes=args.redo_lidar_holes)
             _print({"project": r.get("project"),
                     "results": str(out / "RESULTS.md"),
                     "huc12_summary": r.get("huc12_summary"),
@@ -665,6 +675,13 @@ def main(argv: list[str] | None = None) -> int:
                     "level_b": r.get("level_b"),
                     "warnings": r.get("warnings"),
                     "seconds": r.get("seconds")})
+
+        elif args.cmd == "status":
+            r = api.project_status(args.folder)
+            if args.json:
+                _print(r)
+            else:
+                print("\n".join(r["lines"]))
 
         elif args.cmd == "backends":
             _print(api.landscape_backends())

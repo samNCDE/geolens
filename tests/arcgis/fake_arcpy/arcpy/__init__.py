@@ -19,6 +19,7 @@ def reset():
     env.isCancelled = False
     env.autoCancelling = True
     mp.MAP.layers.clear()
+    mp.MAP.moves.clear()
 
 
 class ExecuteError(Exception):
@@ -304,6 +305,7 @@ class Layer:
         self._symbology = _Symbology(self)
         self._cim = types.SimpleNamespace(popupInfo=None)
         self.applied_symbology = None
+        self.visible = True
 
     def supports(self, what):
         return what in ("DATASOURCE", "NAME", "SYMBOLOGY")
@@ -327,9 +329,24 @@ class Layer:
 class _Map:
     def __init__(self):
         self.layers = []
+        self.moves = []
 
     def listLayers(self):
         return list(self.layers)
+
+    def addDataFromPath(self, path):
+        LOG.append(("addDataFromPath", str(path)))
+        lyr = Layer(path)
+        self.layers.append(lyr)
+        return lyr
+
+    def moveLayer(self, reference, layer, where="BEFORE"):
+        """The layer list here is bottom to top (the order layers were
+        added); Pro's is top to bottom, so AFTER (below) is before here."""
+        self.moves.append((reference.name, layer.name, where))
+        self.layers.remove(layer)
+        i = self.layers.index(reference)
+        self.layers.insert(i if where == "AFTER" else i + 1, layer)
 
 
 class mp:

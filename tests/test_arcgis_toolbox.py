@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import filecmp
 import importlib.machinery
+import json
 import importlib.util
 import os
 import sys
@@ -452,17 +453,24 @@ def test_every_geolens_call_matches_the_api():
     from geolens import api
 
     tree = ast.parse((TBX / "geolens.pyt").read_text())
+    # A call's arguments built first (kw = {...}) are looked up by name, so
+    # the project tool's call, run in Pro or in its own window, is checked.
+    named = {t.id: n.value for n in ast.walk(tree) if isinstance(n, ast.Assign)
+             and isinstance(n.value, ast.Dict)
+             for t in n.targets if isinstance(t, ast.Name)}
     calls = 0
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "run"
+                and node.func.attr in ("run", "launch")
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == "ga"
                 and node.args and isinstance(node.args[0], ast.Constant)):
             continue
         fn = getattr(api, node.args[0].value, None)
         assert callable(fn), node.args[0].value
+        if len(node.args) >= 2 and isinstance(node.args[1], ast.Name):
+            node.args[1] = named.get(node.args[1].id, node.args[1])
         if len(node.args) < 2 or not isinstance(node.args[1], ast.Dict):
             continue
         sig = inspect.signature(inspect.unwrap(fn))
@@ -575,5 +583,221 @@ def test_project_and_services_tools(tbx):
     assert v["curve"].value.startswith("By location")
     tool.updateMessages(params)
     assert v["url"].message                     # no boundary yet: a warning
+    assert {"own_window", "fine", "fine_cell", "fine_workers", "copy_from",
+            "keep_dem", "redo_holes"} <= set(v)
+    assert v["own_window"].category is None     # not hidden under Options
     tool, params, v = _tool(tbx, "CheckServices")
     assert "all_ok" in v
+
+
+# -- long runs (v0.45) ---------------------------------------------------------
+
+def test_a_long_run_starts_in_its_own_window(tbx, tmp_path, monkeypatch):
+    """Ticked, the project tool writes the call and a launcher into the
+    project folder and starts the launcher, instead of running in Pro; a
+    run over every HUC12 left unticked gets a warning; the lidar valley
+    settings reach run_project."""
+    mod, arcpy = tbx
+    started, ran = [], []
+    real = mod.ga.runner.launch_detached
+
+    def launch(*a, **k):
+        started.append((a, k))
+        return real(*a, **dict(k, start=False))
+
+    monkeypatch.setattr(mod.ga.runner, "launch_detached", launch)
+    monkeypatch.setattr(mod.ga, "run", lambda *a, **k: ran.append(a) or {})
+    out = tmp_path / "v43"
+    fine_all = mod.RunProject.FINE[2][0]
+    tool, params, v = _tool(
+        tbx, "RunProject", out_folder=str(out), fine=fine_all,
+        url="https://example.org/arcgis/rest/services/x/MapServer/3")
+    tool.updateMessages(params)
+    assert v["own_window"].messageType == "warning"   # a day or more: tick it
+    tool, params, v = _tool(
+        tbx, "RunProject", out_folder=str(out), fine=fine_all, own_window=True,
+        fine_cell=2.0, fine_workers=4, keep_dem=True,
+        url="https://example.org/arcgis/rest/services/x/MapServer/3")
+    tool.updateMessages(params)
+    assert not v["own_window"].message
+    tool.execute(params, None)
+    assert ran == [] and len(started) == 1
+    settings = json.loads((out / "geolens_run.json").read_text())
+    assert settings["function"] == "run_project"
+    kw = settings["kwargs"]
+    assert (kw["fine_valleys"], kw["fine_cell_m"], kw["fine_workers"],
+            kw["keep_lidar_dem"]) == ("all", 2.0, 4, True)
+    launcher = out / ("run_geolens.bat" if os.name == "nt" else "run_geolens.sh")
+    assert launcher.exists()
+    text = launcher.read_text()
+    assert "geolens.job" in text and str(out / "geolens_run.json") in text
+    msgs = " ".join(m for _, m in _log(tbx, "message"))
+    assert "its own window" in msgs and "Check on a project run" in msgs
+    tool, params, v = _tool(tbx, "RunProject", out_folder=str(out),
+                            fine_cell=0.5,
+                            url="https://example.org/arcgis/rest/services/x/MapServer/3")
+    tool.updateMessages(params)
+    assert v["fine_cell"].hasError()
+
+
+def test_the_windows_launcher(tbx, tmp_path):
+    """What run_geolens.bat does: the environment's DLLs first and the GIS's
+    settings removed, this release's geolens, up to five tries a minute
+    apart, no retry when another run has the folder, CRLF line ends, and
+    special characters in a folder name kept literal."""
+    mod, _ = tbx
+    r = mod.ga.runner
+    out = tmp_path / "proj 100% & more"
+    settings, bat = r.write_launcher(r"C:\envs\geolens\python.exe", "run_project",
+                                     {"boundary": "b.gpkg"}, str(out),
+                                     title="project v43", by="test",
+                                     windows=True)
+    raw = bat.read_bytes()
+    assert b"\r\n" in raw and raw.count(b"\n") == raw.count(b"\r\n")
+    text = raw.decode("utf-8")
+    assert text.startswith("@echo off\r\nchcp 65001")
+    assert 'set "PY=C:\\envs\\geolens\\python.exe"' in text
+    assert "%ENVDIR%\\Library\\bin" in text and "PROJ_LIB" in text
+    src = r.release_src()
+    assert f'set "PYTHONPATH={src}"' in text
+    assert '-u -m geolens.job "' in text
+    assert 'if "%RC%"=="3" goto busy' in text and "GEQ 5 goto failed" in text
+    assert "proj 100%% ^& more" in text          # echo / title lines
+    assert json.loads(settings.read_text())["kwargs"] == {"boundary": "b.gpkg"}
+
+
+def test_a_folder_with_a_live_run_is_refused(tbx, tmp_path, monkeypatch):
+    mod, _ = tbx
+    r = mod.ga.runner
+    out = tmp_path / "proj"
+    out.mkdir()
+    (out / "run.lock").write_text(f"{os.getppid()} 2026-10-23T00:00:00Z\n")
+    with pytest.raises(RuntimeError, match="Another geolens run"):
+        r.launch_detached(sys.executable, "run_project", {}, str(out),
+                          start=False)
+    (out / "run.lock").write_text("0 x\n")
+    assert r.launch_detached(sys.executable, "run_project", {}, str(out),
+                             start=False)["settings"]
+
+
+def test_the_launcher_runs_the_call_and_tries_again(tbx, tmp_path):
+    """The .sh launcher, for real: a call that fails once is tried again
+    (here without the minute's wait) and then finishes."""
+    if os.name == "nt":
+        pytest.skip("the .bat is checked by its text")
+    mod, _ = tbx
+    r = mod.ga.runner
+    out = tmp_path / "proj"
+    settings, sh = r.write_launcher(sys.executable, "project_status",
+                                    {"project_folder": str(tmp_path / "none")},
+                                    str(out), windows=False)
+    text = sh.read_text().replace("sleep 60", "sleep 0")
+    sh.write_text(text)
+    import subprocess
+
+    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
+    p = subprocess.run(["sh", str(sh)], capture_output=True, text=True,
+                       env=env, timeout=600)
+    # no project.json there: an error each time, five tries, then it stops
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert p.stdout.count("attempt") == 5
+    (tmp_path / "none").mkdir()
+    (tmp_path / "none" / "project.json").write_text("{}")
+    p = subprocess.run(["sh", str(sh)], capture_output=True, text=True,
+                       env=env, timeout=600)
+    assert p.returncode == 0, p.stdout + p.stderr
+    res = json.loads((out / "geolens_run_result.json").read_text())
+    assert res["result"]["running"] is False
+
+
+def _project_folder(tmp_path):
+    """A finished project's layers, as merged writes them."""
+    import geopandas as gpd
+    from shapely.geometry import LineString, box
+
+    root = tmp_path / "geolens_v43"
+    merged = root / "merged"
+    extent = root / "A_landscape" / "run" / "valley_extent_dir"
+    for d in (merged, extent):
+        d.mkdir(parents=True)
+    line = [LineString([(400000, 4500000), (401000, 4501000)])]
+    poly = [box(400000, 4500000, 401000, 4501000)]
+    crs = "EPSG:32612"
+    for name, geom, folder in (("valley_types", line, merged),
+                               ("valley_types_3m", line, merged),
+                               ("valley_extent_3m", poly, merged),
+                               ("valley_extent", poly, extent)):
+        gpd.GeoDataFrame({"valley_type": ["U-AL-AD"]}, geometry=geom,
+                         crs=crs).to_file(folder / f"{name}.gpkg", layer=name,
+                                          driver="GPKG")
+    gpd.GeoDataFrame({"name": ["Big Sandy"]}, geometry=line, crs=crs).to_file(
+        merged / "major_streams.gpkg", layer="major_streams", driver="GPKG")
+    (root / "project.json").write_text(json.dumps({"steps": {}, "huc12": {}}))
+    return root
+
+
+def test_a_projects_results_on_the_map(tbx, tmp_path):
+    """Named for the folder and coloured, each set of valley polygons just
+    under the valley-type lines it matches (Pro's AFTER: below)."""
+    mod, arcpy = tbx
+    root = _project_folder(tmp_path)
+    tool, params, v = _tool(tbx, "AddProjectResults", project=str(root))
+    tool.updateMessages(params)
+    assert not v["project"].hasError()
+    tool.execute(params, None)
+    t = " - geolens_v43"
+    # the stand-in's list is bottom to top
+    assert [lyr.name for lyr in arcpy.mp.MAP.layers] == [
+        "Valley extent (by valley type)" + t, "Valley types" + t,
+        "Valley extent on the lidar at 3 m" + t,
+        "Valley types on the lidar at 3 m" + t, "Major streams" + t]
+    fill = arcpy.mp.MAP.layers[2]
+    item = fill.symbology.renderer.groups[0].items[0]
+    assert item.symbol.color["RGB"] == [27, 158, 119, 35]     # U-AL-AD, see-through
+    assert item.symbol.outlineColor == {"RGB": [27, 158, 119, 100]}
+    assert "5 layers" in " ".join(m for _, m in _log(tbx, "message"))
+    tool, params, v = _tool(tbx, "AddProjectResults", project=str(tmp_path))
+    tool.updateMessages(params)
+    assert v["project"].hasError()
+
+
+def test_adding_again_recolours_and_keeps_on_off(tbx, tmp_path):
+    mod, arcpy = tbx
+    root = _project_folder(tmp_path)
+    arcpy.reset()
+    mod.ga.add_project_layers(str(root), "v43")
+    first = list(arcpy.mp.MAP.layers)
+    first[0].visible = False
+    names = mod.ga.add_project_layers(str(root), "v43 3 m")
+    assert arcpy.mp.MAP.layers == first                   # nothing added twice
+    assert all(n.endswith(" - v43 3 m") for n in names)
+    assert first[0].visible is False
+    msgs = [m for _, m in _log(tbx, "message")]
+    assert sum("already there" in m for m in msgs) == len(first)
+    (root / "merged").rename(root / "elsewhere")
+    (root / "A_landscape").rename(root / "elsewhere2")
+    with pytest.raises(arcpy.ExecuteError, match="No results"):
+        mod.ga.add_project_layers(str(root), "x")
+
+
+def test_checking_on_a_project_run(tbx, tmp_path):
+    """The check tool runs geolens.project_status in the geolens environment
+    and puts its lines in the messages."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "project.json").write_text(json.dumps({
+        "steps": {"boundary": {"status": "done"}},
+        "huc12": {"150100000101": {"status": "done"}},
+        "fine_valleys": {"mode": "pilot", "cell_m": 3.0, "workers": 1,
+                         "chosen": ["150100000101"],
+                         "huc12": {"150100000101": {"status": "done",
+                                                    "seconds": 600.0}}}}))
+    tool, params, v = _tool(tbx, "CheckProjectRun", project=str(root))
+    _execute(tbx, tool, params)
+    msgs = "\n".join(m for _, m in _log(tbx, "message"))
+    assert "No run is working in it now" in msgs
+    assert "1 of 1 HUC12s done" in msgs
+    assert v["running"].value is False
+    tool, params, v = _tool(tbx, "CheckProjectRun", project=str(tmp_path))
+    tool.updateMessages(params)
+    assert v["project"].hasError()

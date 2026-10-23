@@ -205,6 +205,34 @@ def run(function: str, kwargs: dict, out_dir: str, title: str | None = None):
     return res
 
 
+def launch(function: str, kwargs: dict, out_dir: str, title: str) -> dict:
+    """Start ``geolens.api.<function>(**kwargs)`` in a window of its own and
+    return at once, for runs of hours or days: ArcGIS Pro stays free, and
+    the launcher left in the folder carries the run on after a stop."""
+    py = find_python()
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    try:
+        info = runner.launch_detached(py, function, kwargs, str(out_dir),
+                                      title=title,
+                                      by="the geolens ArcGIS toolbox")
+    except RuntimeError as exc:
+        fail(str(exc))
+    except OSError as exc:
+        fail(f"Could not start the run in its own window ({exc}). The "
+             f"launcher is in {out_dir}: double-click run_geolens.bat there.")
+    arcpy.AddMessage(f"geolens: {function} started in its own window "
+                     f"(environment {py}).")
+    arcpy.AddMessage(f"project folder: {out_dir}")
+    arcpy.AddMessage("Leave that window open: closing it stops the run. ArcGIS "
+                     "Pro is free to use, or to close, meanwhile.")
+    arcpy.AddMessage(f"After a stop, a crash or a reboot, double-click "
+                     f"{info['launcher']}: it carries on where it stopped.")
+    arcpy.AddMessage("How far it has got: the 'Check on a project run' tool. "
+                     "When it has finished: 'Add a project's results to the "
+                     "map'.")
+    return info
+
+
 def memory_check(dem: str, out_dir: str, force: bool, stage: str | None = None):
     """Stop before a run that will not fit in memory (unless forced)."""
     plan = run("plan_landscape_run", {"dem": dem}, out_dir,
@@ -404,6 +432,24 @@ def _style_key(name: str) -> tuple[str | None, str]:
     return None, ""
 
 
+_FINE = re.compile(r"^(valley_types|valley_extent)_(\d+(?:\.\d+)?)m$")
+
+
+def _spec(name: str):
+    """(STYLES spec, run prefix) for a dataset name. The lidar valley layers
+    at any cell (valley_types_2m, valley_extent_5m) take their kind's colours
+    and are named for their cell."""
+    key, prefix = _style_key(name)
+    if key:
+        return STYLES[key], prefix
+    m = _FINE.match(name or "")
+    if m:
+        base = STYLES[m.group(1)]
+        return dict(base, name=f"{base['name']} on the lidar at "
+                               f"{m.group(2)} m"), ""
+    return None, ""
+
+
 def _field_names_of(dataset) -> set:
     try:
         return {f.name.lower() for f in arcpy.ListFields(dataset)}
@@ -502,12 +548,17 @@ STYLES = {
               "colours": _MATERIAL, "alpha": 45},
     "major_streams": {"name": "Major streams", "single": "#08519c",
                       "width": 3.0},
-    "valley_types_3m": {"name": "Valley types at 3 m (pilot)",
+    "valley_types_3m": {"name": "Valley types on the lidar at 3 m",
                         "field": "valley_type", "colours": _VALLEY,
                         "width": 2.0},
-    "valley_extent_3m": {"name": "Valley extent at 3 m (pilot)",
+    "valley_extent_3m": {"name": "Valley extent on the lidar at 3 m",
                          "field": "valley_type", "colours": _VALLEY,
                          "alpha": 35},
+    "huc12_status": {"name": "HUC12 status", "field": "level_b",
+                     "colours": {"done": "#4393c3", "failed": "#b2182b",
+                                 "no lidar": _GREY, "queued": "#f4a582",
+                                 "upstream only": "#e0e0e0"},
+                     "alpha": 30},
     "huc12_sensitivity": {"name": "HUC12 sensitivity",
                           "field": "sensitivity_class",
                           "colours": {"high": "#b2182b", "moderate": "#f4a582",
@@ -645,8 +696,7 @@ def _field_names(lyr) -> set[str]:
 
 def style_layer(lyr) -> None:
     name, gpkg = _dataset_key(lyr.dataSource)
-    key, prefix = _style_key(name)
-    spec = STYLES.get(key) if key else None
+    spec, prefix = _spec(name)
     if spec is None:
         return
     lyr.name = spec["name"] + (f" ({prefix})" if prefix else "")
@@ -699,3 +749,135 @@ def style_outputs(parameters) -> None:
             style_layer(lyr)
         except Exception:                                    # noqa: BLE001
             continue
+
+
+# -- a project's results on the map (v0.45) -----------------------------------------
+# What add_v42_layers.py did for Kingman v42, for any project folder: the
+# merged layers, the valley extent polygons coloured like the valley-type
+# lines, the lidar valley layers and the review sample, named, coloured and
+# in a sensible order. Run again, it re-colours the layers already there
+# (switched on or off as they were) instead of adding them twice.
+
+# (dataset, where, switched on?); bottom to top. "merged" is the project's
+# merged folder; "extent" the 10 m valley extent; "review" the review folder.
+PROJECT_LAYERS = [("huc12_summary", "merged", False),
+                  ("huc12_sensitivity", "merged", False),
+                  ("huc12_status", "merged", False),
+                  ("valley_extent", "extent", True),
+                  ("valley_extent_fine", "merged", True),
+                  ("valley_types", "merged", True),
+                  ("valley_types_fine", "merged", True),
+                  ("stream_types", "merged", False),
+                  ("stream_stability", "merged", False),
+                  ("major_streams", "merged", True),
+                  ("validation_sample", "review", False)]
+LABELS = {"huc12_summary": "HUC12 summary (all the numbers)",
+          "valley_extent": "Valley extent (by valley type)",
+          "validation_sample": "Validation sample (reaches to score)"}
+
+
+def _project_json(folder: str) -> dict:
+    import json
+
+    try:
+        return json.loads((Path(folder) / "project.json").read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def project_layer_files(folder: str) -> list[tuple[str, str, bool]]:
+    """(dataset, GeoPackage, switched on?) for each result a project folder
+    has, bottom to top of the map."""
+    root = Path(folder)
+    run = ((_project_json(folder).get("steps") or {}).get("pass_a") or {}).get("run")
+    extent_dirs = [Path(run)] if run else []
+    extent_dirs.append(root / "A_landscape" / "run")
+    where = {"merged": [root / "merged"], "review": [root / "review"],
+             "extent": [d / "valley_extent_dir" for d in extent_dirs]}
+    out = []
+    for name, place, on in PROJECT_LAYERS:
+        if name.endswith("_fine"):
+            kind = name[:-5]
+            found = sorted(p for p in (root / "merged").glob(f"{kind}_*m.gpkg")
+                           if _FINE.match(p.stem))
+            out += [(p.stem, str(p), on) for p in found]
+            continue
+        for d in where[place]:
+            p = d / f"{name}.gpkg"
+            if p.is_file():
+                out.append((name, str(p), on))
+                break
+    return out
+
+
+def _outline_like_fill(lyr, width: float = 0.5) -> None:
+    """A see-through fill with a solid outline of its own colour."""
+    sym = lyr.symbology
+    if not hasattr(sym, "renderer") or not hasattr(sym.renderer, "groups"):
+        return
+    for grp in sym.renderer.groups:
+        for itm in grp.items:
+            rgb = list((itm.symbol.color or {}).get("RGB", [184, 183, 178]))[:3]
+            itm.symbol.outlineColor = {"RGB": rgb + [100]}
+            itm.symbol.outlineWidth = width
+    lyr.symbology = sym
+
+
+def add_project_layers(folder: str, tag: str | None = None) -> list[str]:
+    """Add a project's results to the active map; returns the layer names."""
+    try:
+        m = arcpy.mp.ArcGISProject("CURRENT").activeMap
+    except Exception:                                        # noqa: BLE001
+        m = None
+    if m is None:
+        fail("No active map: click into a map view, then run the tool again.")
+    files = project_layer_files(folder)
+    if not files:
+        fail(f"No results in {folder} yet: the merged layers are written at "
+             f"the end of a project run.")
+    tag = f" - {tag}" if tag else ""
+    there = {}
+    for lyr in m.listLayers():
+        try:
+            if lyr.supports("DATASOURCE"):
+                there[_norm(lyr.dataSource)] = lyr
+        except Exception:                                    # noqa: BLE001
+            continue
+    arcpy.SetProgressor("step", "Adding the project's results", 0, len(files), 1)
+    added: dict[str, object] = {}
+    names = []
+    for i, (name, gpkg, on) in enumerate(files, 1):
+        fc = feature_class(gpkg)
+        lyr = there.get(_norm(fc)) if fc else None
+        new = lyr is None
+        if new:
+            lyr = m.addDataFromPath(fc)
+        try:
+            style_layer(lyr)
+            if name.startswith("valley_extent"):
+                _outline_like_fill(lyr)
+        except Exception as exc:                             # noqa: BLE001
+            arcpy.AddWarning(f"{name}: left in ArcGIS's colours ({exc})")
+        spec, _ = _spec(name)
+        label = LABELS.get(name) or (spec or {}).get("name") or name
+        lyr.name = label + tag
+        if new:                    # a layer already there keeps its on / off
+            lyr.visible = on
+        added[name] = lyr
+        names.append(lyr.name)
+        arcpy.AddMessage(f"[{i}/{len(files)}] {lyr.name}"
+                         + ("" if new else "  (already there: re-coloured)")
+                         + ("" if lyr.visible else "  (off)"))
+        arcpy.SetProgressorPosition(i)
+    # each set of valley polygons just under the valley-type lines it matches
+    for lines, polys in [("valley_types", "valley_extent")] + [
+            (n, "valley_extent" + n[len("valley_types"):]) for n in added
+            if n.startswith("valley_types_")]:
+        if lines in added and polys in added:
+            try:
+                m.moveLayer(added[lines], added[polys], "AFTER")
+            except Exception:                                # noqa: BLE001
+                pass
+    arcpy.ResetProgressor()
+    return names

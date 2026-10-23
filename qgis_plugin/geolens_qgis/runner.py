@@ -394,6 +394,268 @@ def run_api(python: str, function: str, kwargs: dict[str, Any],
     return result["value"]
 
 
+# -- a run in a window of its own --------------------------------------------------
+# A project run of days should not tie up the GIS, nor end when it is closed.
+# The call is written into the output folder (geolens_run.json, read by
+# ``python -m geolens.job``) with a launcher beside it, and the launcher is
+# started in a console window of its own. After a stop, a crash or a reboot,
+# double-clicking the launcher carries on (a project run skips what is
+# done); it also tries again by itself, a minute apart, up to five times.
+
+SETTINGS_FILE = "geolens_run.json"
+LAUNCHER_BAT = "run_geolens.bat"
+LAUNCHER_SH = "run_geolens.sh"
+_LAUNCH_TRIES = 5
+_ENV_DIRS = ("", "Library\\mingw-w64\\bin", "Library\\usr\\bin", "Library\\bin",
+             "Scripts", "bin")
+
+
+def running_pid(out_dir: str) -> int:
+    """The process of a geolens run working in ``out_dir`` now (its
+    run.lock), or 0."""
+    try:
+        pid = int((Path(out_dir) / "run.lock").read_text(
+            encoding="utf-8").split()[0])
+    except (OSError, ValueError, IndexError):
+        return 0
+    if pid <= 0 or pid == os.getpid():
+        return 0
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            k = ctypes.windll.kernel32
+            h = k.OpenProcess(0x1000, False, pid)    # QUERY_LIMITED_INFORMATION
+            if not h:
+                return 0
+            code = ctypes.c_ulong()
+            ok = k.GetExitCodeProcess(h, ctypes.byref(code))
+            k.CloseHandle(h)
+            return pid if ok and code.value == 259 else 0   # STILL_ACTIVE
+        except Exception:                                    # noqa: BLE001
+            return 0
+    try:
+        os.kill(pid, 0)
+        return pid
+    except OSError:
+        return 0
+
+
+def _bat(s: str) -> str:
+    """A value inside a .bat line: % doubled."""
+    return str(s).replace("%", "%%")
+
+
+def _bat_echo(s: str) -> str:
+    """Text for an ``echo`` or ``title`` line: cmd's special characters
+    escaped."""
+    out = _bat(s)
+    for c in "^&|<>":
+        out = out.replace(c, "^" + c)
+    return out
+
+
+def launcher_bat(python: str, settings: str, out_dir: str, title: str,
+                 function: str, src: str | None = None,
+                 extra: dict[str, str] | None = None, by: str = "") -> str:
+    """The Windows launcher's text (CRLF line ends are added on writing)."""
+    sets = [f'set "{k}={_bat(v)}"' for k, v in (extra or {}).items()]
+    if src:
+        sets = [f'set "PYTHONPATH={_bat(src)}"',
+                f'set "GEOLENS_SRC={_bat(src)}"'] + sets
+    dirs = ";".join("%ENVDIR%" + ("\\" + d if d else "") for d in _ENV_DIRS)
+    lines = [
+        "@echo off",
+        "chcp 65001 >nul",
+        "rem " + "=" * 75,
+        f"rem  geolens: {_bat(title)}",
+        f"rem  Written by {_bat(by or 'geolens')} on {time.strftime('%Y-%m-%d %H:%M')}; "
+        f"the call it runs is {SETTINGS_FILE} beside it.",
+        "rem",
+        "rem  Leave the window open: closing it stops the run. After a stop, a",
+        "rem  crash, a reboot or a power cut, double-click this file: it carries on",
+        "rem  where it stopped (finished steps are kept). It tries again by itself,",
+        f"rem  a minute apart, up to {_LAUNCH_TRIES} times if geolens stops with an error.",
+        "rem " + "=" * 75,
+        "setlocal EnableExtensions",
+        f"title geolens {_bat_echo(title)} - leave open (close to stop; run again "
+        f"to carry on)",
+        f'cd /d "{_bat(out_dir)}"',
+        f'set "PY={_bat(python)}"',
+        'if not exist "%PY%" (',
+        "  echo.",
+        "  echo  The geolens Python environment is not where it was: %PY%",
+        "  echo  Start the run again from the toolbox, which finds it.",
+        "  pause",
+        "  exit /b 2",
+        ")",
+        "rem the environment's own DLLs first; no other program's GDAL, PROJ or",
+        "rem Python settings (those of ArcGIS Pro or QGIS among them)",
+        'for %%P in ("%PY%") do set "ENVDIR=%%~dpP"',
+        'set "ENVDIR=%ENVDIR:~0,-1%"',
+        f'set "PATH={dirs};%PATH%"',
+        "for %%V in (" + " ".join(_STRIP_ENV) + " GEOLENS_PROGRESS "
+        "GEOLENS_NO_PROGRESS) do set \"%%V=\"",
+        *sets,
+        'set "PYTHONIOENCODING=utf-8"',
+        'set "PYTHONUNBUFFERED=1"',
+        "",
+        "set /a TRIES=0",
+        ":run",
+        "set /a TRIES+=1",
+        "echo.",
+        f"echo  geolens {_bat_echo(function)}, attempt %TRIES% of {_LAUNCH_TRIES}, "
+        f"started %DATE% %TIME%",
+        "echo.",
+        f'"%PY%" -u -m geolens.job "{_bat(settings)}"',
+        'set "RC=%ERRORLEVEL%"',
+        'if "%RC%"=="0" goto done',
+        'if "%RC%"=="3" goto busy',
+        'if "%RC%"=="2" goto failed',
+        f"if %TRIES% GEQ {_LAUNCH_TRIES} goto failed",
+        "echo.",
+        "echo  geolens stopped with an error (code %RC%). Trying again in 60 seconds...",
+        "timeout /t 60 /nobreak >nul",
+        "goto run",
+        "",
+        ":busy",
+        "echo.",
+        "echo  Another geolens run is working in this folder: nothing was started.",
+        "echo.",
+        "pause",
+        "exit /b 3",
+        "",
+        ":done",
+        "echo.",
+        "echo  Finished %DATE% %TIME%.",
+        f'if exist "RESULTS.md" echo  Results: {_bat_echo(out_dir)}\\RESULTS.md',
+        "echo.",
+        "pause",
+        "exit /b 0",
+        "",
+        ":failed",
+        "echo.",
+        "echo  geolens stopped with an error (last code %RC%). What finished is kept:",
+        "echo  double-click this file to carry on, or see the messages above.",
+        "echo.",
+        "pause",
+        "exit /b 1",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _sh(s: str) -> str:
+    return "'" + str(s).replace("'", "'\\''") + "'"
+
+
+def launcher_sh(python: str, settings: str, out_dir: str, title: str,
+                function: str, src: str | None = None,
+                extra: dict[str, str] | None = None, by: str = "") -> str:
+    env = dict(extra or {})
+    if src:
+        env = {"PYTHONPATH": src, "GEOLENS_SRC": src, **env}
+    lines = [
+        "#!/bin/sh",
+        f"# geolens: {title}",
+        f"# Written by {by or 'geolens'} on {time.strftime('%Y-%m-%d %H:%M')}; the "
+        f"call it runs is {SETTINGS_FILE} beside it. Run it again to carry on",
+        "# where it stopped (finished steps are kept).",
+        f"cd {_sh(out_dir)} || exit 2",
+        "unset " + " ".join(_STRIP_ENV) + " GEOLENS_PROGRESS GEOLENS_NO_PROGRESS",
+        *[f"export {k}={_sh(v)}" for k, v in env.items()],
+        "export PYTHONIOENCODING=utf-8 PYTHONUNBUFFERED=1",
+        "tries=0",
+        "while :; do",
+        "  tries=$((tries + 1))",
+        f'  echo "geolens {function}, attempt $tries of {_LAUNCH_TRIES}, started $(date)"',
+        f"  {_sh(python)} -u -m geolens.job {_sh(settings)}",
+        "  rc=$?",
+        '  [ "$rc" -eq 0 ] && { echo "Finished $(date)."; exit 0; }',
+        '  [ "$rc" -eq 3 ] && { echo "Another geolens run is working in this '
+        'folder: nothing was started."; exit 3; }',
+        '  [ "$rc" -eq 2 ] && exit 2',
+        f'  [ "$tries" -ge {_LAUNCH_TRIES} ] && {{ echo "geolens stopped with an '
+        f'error (last code $rc): run this again to carry on."; exit 1; }}',
+        '  echo "geolens stopped with an error (code $rc). Trying again in 60 '
+        'seconds..."',
+        "  sleep 60",
+        "done",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def write_launcher(python: str, function: str, kwargs: dict[str, Any],
+                   out_dir: str, title: str = "", by: str = "",
+                   windows: bool | None = None) -> tuple[Path, Path]:
+    """geolens_run.json and the launcher beside it, in ``out_dir``."""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    settings = out / SETTINGS_FILE
+    settings.write_text(json.dumps(
+        {"function": function, "kwargs": kwargs, "out_dir": str(out),
+         "written": time.strftime("%Y-%m-%d %H:%M:%S"), "by": by},
+        indent=1, default=str), encoding="utf-8")
+    src = release_src()
+    root = portable_root()
+    extra = _portable_env(root) if root is not None else None
+    win = (os.name == "nt") if windows is None else windows
+    args = (python, str(settings), str(out), title or function, function,
+            str(src) if src else None, extra, by)
+    if win:
+        path = out / LAUNCHER_BAT
+        path.write_bytes(launcher_bat(*args).replace("\n", "\r\n")
+                         .encode("utf-8"))
+    else:
+        path = out / LAUNCHER_SH
+        path.write_text(launcher_sh(*args), encoding="utf-8")
+        path.chmod(0o755)
+    return settings, path
+
+
+def launch_detached(python: str, function: str, kwargs: dict[str, Any],
+                    out_dir: str, title: str = "", by: str = "",
+                    start: bool = True) -> dict[str, Any]:
+    """Write the call and its launcher into ``out_dir`` and start the
+    launcher in a console window of its own; returns at once. Refuses if a
+    run is already working in that folder."""
+    busy = running_pid(out_dir)
+    if busy:
+        raise RuntimeError(
+            f"Another geolens run (process {busy}) is working in {out_dir}. "
+            f"Let it finish, or close its window, before starting this folder "
+            f"again.")
+    settings, launcher = write_launcher(python, function, kwargs, out_dir,
+                                        title, by)
+    info: dict[str, Any] = {"settings": str(settings), "launcher": str(launcher),
+                            "pid": None, "log": None}
+    if not start:
+        return info
+    env = clean_env(python)
+    if os.name == "nt":
+        flags = (getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10)
+                 | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200))
+        breakaway = 0x01000000          # CREATE_BREAKAWAY_FROM_JOB: outlive the GIS
+        try:
+            proc = subprocess.Popen(["cmd.exe", "/c", str(launcher)],
+                                    cwd=str(out_dir), env=env,
+                                    creationflags=flags | breakaway,
+                                    close_fds=True)
+        except OSError:                 # the GIS's job does not allow it
+            proc = subprocess.Popen(["cmd.exe", "/c", str(launcher)],
+                                    cwd=str(out_dir), env=env,
+                                    creationflags=flags, close_fds=True)
+    else:
+        log = Path(out_dir) / "run_geolens.log"
+        info["log"] = str(log)
+        with open(log, "ab") as fh:
+            proc = subprocess.Popen(["sh", str(launcher)], cwd=str(out_dir),
+                                    env=env, stdout=fh, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL,
+                                    start_new_session=True, close_fds=True)
+    info["pid"] = proc.pid
+    return info
+
+
 # -- NASA Earthdata login --------------------------------------------------------
 # Written here, by the host program's own Python, so a password typed into a
 # tool's dialog goes straight into the user's netrc file: never through the

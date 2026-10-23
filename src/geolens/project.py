@@ -111,7 +111,17 @@ class _Status:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.data, indent=1, default=str),
                        encoding="utf-8")
-        tmp.replace(self.path)
+        # Windows will not replace a file another program has open (a
+        # status check, a backup, an editor) at that moment: a run of days
+        # must not stop for that, so it tries again for a few seconds.
+        for attempt in range(20):
+            try:
+                tmp.replace(self.path)
+                return
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.25)
 
     def step(self, name: str) -> dict | None:
         s = self.data["steps"].get(name)
@@ -992,6 +1002,7 @@ def run_project(boundary: str, where: str | None = None,
                 fine_cell_m: float = 3.0,
                 fine_workers: int | None = None,
                 copy_from: str | None = None,
+                redo_lidar_holes: bool = False,
                 timeout: int = 120,
                 guard: Guard | None = None) -> dict[str, Any]:
     """Level A over the whole area, level B by HUC12, merged layers, a
@@ -1024,8 +1035,11 @@ def run_project(boundary: str, where: str | None = None,
     ``valley_types_3m`` and ``valley_extent_3m``.
     ``copy_from``: an earlier project folder to start a new one from (its
     level A, level B, soils and data are copied, never changed; this run
-    carries on from them). Resumes a project folder that already has a
-    ``project.json``."""
+    carries on from them). ``redo_lidar_holes``: run level B again for the
+    HUC12s whose 1 m mosaic was made before v0.45 by skipping a tile on its
+    footprint alone (it can have holes where lidar projects overlap or meet
+    at a UTM zone line); the finer valley pass always redoes those. Resumes
+    a project folder that already has a ``project.json``."""
     import geopandas as gpd
 
     pilot_by = (pilot_by or "representative").lower()
@@ -1289,6 +1303,17 @@ def run_project(boundary: str, where: str | None = None,
     # that is tens of GB for rasters whose sections are already measured.
     keep_dem = keep_lidar_dem if keep_lidar_dem is not None else mode != "all"
     b_t0 = time.monotonic()
+    if redo_lidar_holes:
+        holes = [c for c in want if (st.data["huc12"].get(c) or {}).get("status")
+                 in ("done", "no lidar") and _mosaic_suspect(root / "B_huc12" / c / "dem")]
+        if holes:
+            note(f"project: level B again for {len(holes)} HUC12s whose 1 m "
+                 f"mosaic may have had holes (made before v0.45)")
+            st.data["level_b_redone"] = sorted(set(st.data.get("level_b_redone")
+                                                   or []) | set(holes))
+            for c in holes:
+                st.data["huc12"][c] = dict(st.data["huc12"][c], status="redo")
+            st.save()
     for code in progress(want, label="level B HUC12s"):
         rec = st.data["huc12"].get(code) or {}
         if rec.get("status") in ("done", "no lidar"):
@@ -1475,8 +1500,11 @@ def _level_b(code, row, root: Path, dem_a: str, pa: dict, curve,
                 section_plots=section_plots, guard=g).as_dict()
             stab = stream_stability(pa["valley_types"], stres["segments"],
                                     guard=g)
+        data = d.get("area_coverage")
         out = {"status": "done", "reaches": int(len(inside)),
                "lidar": round(frac, 3), "lidar_partial": frac < lidar_min,
+               "lidar_data": None if data is None else round(float(data), 3),
+               "fetch_version": d.get("fetch_version"),
                "stream_types": stres["segments"],
                "sections": stres.get("sections"),
                "stability": stab["stability"], "counts": stab.get("counts"),
@@ -1547,6 +1575,10 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+class ProjectBusy(GeolensError):
+    """Another run is working in this project folder (nothing to retry)."""
+
+
 def _take_lock(root: Path) -> None:
     """One run per project folder: a second one started while the first
     still runs (a double-click twice, the toolbox and a .bat) would write
@@ -1557,7 +1589,7 @@ def _take_lock(root: Path) -> None:
     except (OSError, ValueError, IndexError):
         pid = 0
     if pid and pid != os.getpid() and _pid_alive(pid):
-        raise GeolensError(
+        raise ProjectBusy(
             f"Another geolens run (process {pid}) is working in {root}. "
             f"Let it finish, or close it, before starting this folder again.")
     lock.write_text(f"{os.getpid()} {_now()}\n", encoding="utf-8")
@@ -1590,6 +1622,215 @@ def _keep_awake() -> None:
         atexit.register(lambda: k.SetThreadExecutionState(es_continuous))
     except Exception:                                        # noqa: BLE001
         pass
+
+
+# -- how far a run has got (v0.45) ---------------------------------------------------
+#
+# What the check-ins on the office-wide 3 m run read by hand -- project.json,
+# run.lock and the free space -- in a few lines, for the toolbox's "Check on
+# a project run" and `geolens status`. It only reads: it never takes the
+# lock, and it opens project.json so that the run can still replace it.
+
+
+def _read_shared(path: Path) -> str:
+    """A text file's contents. On Windows the file is opened with delete
+    sharing: a run replacing project.json at that moment would be refused
+    while Python's own open() held it."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            import msvcrt
+            from ctypes import wintypes
+
+            k = ctypes.WinDLL("kernel32", use_last_error=True)
+            k.CreateFileW.restype = wintypes.HANDLE
+            k.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+                                      wintypes.DWORD, ctypes.c_void_p,
+                                      wintypes.DWORD, wintypes.DWORD,
+                                      wintypes.HANDLE]
+            # GENERIC_READ, sharing read + write + delete, OPEN_EXISTING
+            h = k.CreateFileW(str(path), 0x80000000, 0x7, None, 3, 0x80, None)
+            if h not in (None, 0, ctypes.c_void_p(-1).value):
+                with open(msvcrt.open_osfhandle(h, os.O_RDONLY), "rb") as f:
+                    return f.read().decode("utf-8")
+        except Exception:                                    # noqa: BLE001
+            pass
+    return path.read_text(encoding="utf-8")
+
+
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _ts(iso: str | None) -> float | None:
+    try:
+        return datetime.strptime(str(iso), "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _fine_progress(fv: dict, data: dict, now: float) -> dict[str, Any]:
+    """The lidar valley pass: done, failed and left, and a rough finish."""
+    recs = fv.get("huc12") or {}
+    chosen = [str(c) for c in (fv.get("chosen") or [])]
+    total = fv.get("total")
+    if not total:                    # runs before v0.45 did not record it
+        if fv.get("mode") == "all":
+            lidar = {h for h, v in (data.get("huc12") or {}).items()
+                     if (v or {}).get("status") in ("done", "failed")}
+            total = len(set(chosen) | lidar)
+        else:
+            total = len(set(chosen) | set(recs))
+    counts: dict[str, int] = {}
+    for v in recs.values():
+        s = str((v or {}).get("status", "?"))
+        counts[s] = counts.get(s, 0) + 1
+    done = counts.get("done", 0)
+    failed = [c for c, v in recs.items() if (v or {}).get("status") == "failed"]
+    left = max(0, int(total) - done - counts.get("no lidar", 0) - len(failed))
+    workers = max(1, int(fv.get("workers") or 1))
+    secs = sorted(float(v["seconds"]) for v in recs.values()
+                  if (v or {}).get("status") == "done" and v.get("seconds"))
+    out: dict[str, Any] = {
+        "mode": fv.get("mode"), "cell_m": fv.get("cell_m"), "total": int(total),
+        "done": done, "failed": len(failed), "no_lidar": counts.get("no lidar", 0),
+        "left": left, "workers": workers, "stopped": fv.get("stopped"),
+        "pilot": chosen,
+        "pilot_done": sum(1 for c in chosen
+                          if (recs.get(c) or {}).get("status") == "done"),
+        "failed_huc12s": {c: str((recs[c] or {}).get("error") or "")[:200]
+                          for c in failed[:10]},
+        "median_minutes": round(secs[len(secs) // 2] / 60.0, 1) if secs else None}
+    # The pace: HUC12s finished in the last 12 hours where the records say
+    # when (v0.45 on), else each one's own time shared among the workers.
+    ats = [t for t in (_ts((v or {}).get("at")) for v in recs.values()) if t]
+    recent = [t for t in ats if now - t <= 12 * 3600]
+    per_hour = None
+    if len(recent) >= 3:
+        span = max(now - min(recent), 1800.0)
+        per_hour = len(recent) / (span / 3600.0)
+    elif secs:
+        per_hour = workers * 3600.0 / secs[len(secs) // 2]
+    if per_hour:
+        out["per_hour"] = round(per_hour, 2)
+        out["hours_left"] = round(left / per_hour, 1) if left else 0.0
+    if fv.get("summary"):
+        out["summary"] = fv["summary"]
+    return out
+
+
+def project_status(folder: str | Path) -> dict[str, Any]:
+    """How far a project run has got, from its folder alone: whether a run
+    is working in it now, the steps done, level B and the lidar valley pass
+    HUC12 by HUC12 with a rough finish time, the free space and the last
+    warnings. ``lines`` says it in a few lines."""
+    root = Path(folder).expanduser().resolve()
+    pj = root / "project.json"
+    if not pj.is_file():
+        raise GeolensError(f"{root} is not a geolens project folder (no "
+                           f"project.json). A run just started may still be "
+                           f"copying or fetching its boundary.")
+    data = None
+    for _ in range(10):
+        try:
+            data = json.loads(_read_shared(pj))
+            break
+        except (OSError, ValueError):        # being replaced at that moment
+            time.sleep(0.3)
+    if not isinstance(data, dict):
+        raise GeolensError(f"Could not read {pj}; try again in a minute.")
+    now = time.time()
+    try:
+        mtime = pj.stat().st_mtime
+    except OSError:
+        mtime = now
+    out: dict[str, Any] = {"project": str(root), "updated": _iso(mtime),
+                           "hours_since_update": round((now - mtime) / 3600, 2)}
+    pid, since = 0, None
+    try:
+        parts = _read_shared(root / "run.lock").split()
+        pid, since = int(parts[0]), (parts[1] if len(parts) > 1 else None)
+    except (OSError, ValueError, IndexError):
+        pass
+    out["running"] = bool(pid) and _pid_alive(pid)
+    out["pid"] = pid or None
+    out["started"] = since if out["running"] else None
+    out["steps"] = {k: (v or {}).get("status")
+                    for k, v in (data.get("steps") or {}).items()}
+    if data.get("copied_from"):
+        out["copied_from"] = (data["copied_from"] or {}).get("project")
+    counts: dict[str, int] = {}
+    for v in (data.get("huc12") or {}).values():
+        s = str((v or {}).get("status", "?"))
+        counts[s] = counts.get(s, 0) + 1
+    out["level_b"] = counts
+    if data.get("fine_valleys"):
+        out["fine_valleys"] = _fine_progress(data["fine_valleys"], data, now)
+    out["free_gb"] = round(_free_gb(root), 1)
+    res = root / "RESULTS.md"
+    out["results"] = str(res) if res.is_file() else None
+    # not "warnings": a tool would repeat every one of the run's warnings
+    out["project_warnings"] = [str(w) for w in (data.get("warnings") or [])]
+    out["lines"] = _status_lines(out)
+    return out
+
+
+def _status_lines(s: dict) -> list[str]:
+    lines = [f"Project: {s['project']}"]
+    if s.get("running"):
+        lines.append(f"A run is working in it now (process {s['pid']}, "
+                     f"started {s.get('started') or '?'}).")
+    else:
+        lines.append("No run is working in it now.")
+    lines.append(f"project.json last changed {s['updated']} "
+                 f"({s['hours_since_update']:g} h ago).")
+    if s.get("copied_from"):
+        lines.append(f"Started from {s['copied_from']} (copied; only read).")
+    steps = s.get("steps") or {}
+    if steps:
+        not_done = [k for k, v in steps.items() if v != "done"]
+        lines.append(f"Steps done: {sum(v == 'done' for v in steps.values())} "
+                     f"of {len(steps)}" + (f" (not done: {', '.join(not_done)})"
+                                           if not_done else "") + ".")
+    lb = s.get("level_b") or {}
+    if lb:
+        lines.append("Level B HUC12s: " + ", ".join(
+            f"{n} {k}" for k, n in sorted(lb.items(), key=lambda kv: -kv[1])) + ".")
+    f = s.get("fine_valleys")
+    if f:
+        cell = f.get("cell_m")
+        line = (f"Valleys on the lidar at {cell:g} m ({f.get('mode')}): "
+                if isinstance(cell, (int, float)) else
+                f"Valleys on the lidar ({f.get('mode')}): ")
+        line += (f"{f['done']} of {f['total']} HUC12s done, {f['failed']} failed, "
+                 f"{f['left']} to go, {f['workers']} at a time")
+        if f.get("pilot"):
+            line += f"; pilot {f['pilot_done']} of {len(f['pilot'])} done"
+        lines.append(line + ".")
+        if f.get("per_hour") and f.get("left"):
+            lines.append(f"Pace about {f['per_hour']:g} HUC12s an hour: roughly "
+                         f"{f['hours_left']:g} h to go"
+                         + (" if it keeps running." if s.get("running") else
+                            " once it is running again."))
+        if f.get("median_minutes"):
+            lines.append(f"A HUC12 takes about {f['median_minutes']:g} min "
+                         f"(median).")
+        for code, err in (f.get("failed_huc12s") or {}).items():
+            lines.append(f"  failed {code}: {err}")
+        if f.get("stopped"):
+            lines.append(f"Stopped: the drive is {f['stopped']}. Free some space "
+                         f"and run it again to carry on.")
+    lines.append(f"Free space on the project's drive: {s['free_gb']:g} GB.")
+    if s.get("results"):
+        lines.append(f"Results: {s['results']}")
+    elif not s.get("running"):
+        lines.append("Not finished: run the project again (same folder) to carry "
+                     "on where it stopped.")
+    if s.get("project_warnings"):
+        lines.append(f"Warnings: {len(s['project_warnings'])}; the last: "
+                     f"{s['project_warnings'][-1][:300]}")
+    return lines
 
 
 def _moved_paths(obj, src: Path, root: Path):
@@ -1990,29 +2231,38 @@ def _fine_valley_huc12(code: str, row, root: str, dem_a: str, pa: dict,
         poly = row.iloc[[0]][["huc12", "geometry"]].to_crs(dem_crs)
         poly_path = fdir / "huc12.gpkg"
         poly.to_file(str(poly_path), driver="GPKG", layer="huc12")
-        # A 1 m mosaic kept from an earlier attempt (a crash, a reboot) is
-        # used again rather than downloaded again, if it reads.
-        kept = fdir / "dem" / "dem_mosaic.tif"
-        d = {"dem": str(kept), "coverage": 1.0} if _readable(kept) else None
+        # A 1 m mosaic already on disk is used again rather than downloaded
+        # again, if it reads and was made without the footprint bug: this
+        # pass's own from an earlier attempt (a crash, a reboot), else level
+        # B's, kept with keep_lidar_dem (its buffer is 100 m, not 250 m).
+        d = None
+        for kept in (fdir / "dem" / "dem_mosaic.tif",
+                     root / "B_huc12" / code / "dem" / "dem_mosaic.tif"):
+            d = _kept_mosaic(kept)
+            if d is not None:
+                out["dem_reused"] = str(kept)
+                break
         if d is None:
             with _out(fdir / "dem"):
                 d = api.fetch_dem(str(poly_path), source="1m",
                                   resolution_m=LEVEL_B_CELL_M, crs=dem_a,
                                   buffer_m=250.0)
-        else:
-            out["dem_reused"] = True
+        data = d.get("area_coverage")
+        out["lidar_data"] = None if data is None else round(float(data), 3)
+        out["fetch_version"] = d.get("fetch_version")
         if not keep_tiles:
-            shutil.rmtree(Path(d["dem"]).parent / "dem_tiles", ignore_errors=True)
+            shutil.rmtree(fdir / "dem" / "dem_tiles", ignore_errors=True)
         if float(d.get("coverage") or 0.0) < 0.05:
-            return {"status": "no lidar", "seconds": round(time.monotonic() - t0, 1)}
+            return {**out, "status": "no lidar",
+                    "seconds": round(time.monotonic() - t0, 1)}
         dem1 = d["dem"]
         cell = float(cell_m)
         dem_run = dem1
         if _cell_of(dem1) < cell:
             with _out(fdir / "dem"):
                 dem_run = api.resample_dem(dem1, cell)["path"]
-        if keep_1m:
-            out["dem_1m"] = dem1
+        if keep_1m or Path(dem1).parent != fdir / "dem":
+            out["dem_1m"] = dem1          # kept, or level B's: not this pass's to delete
         elif dem_run != dem1:
             for p in Path(dem1).parent.glob(Path(dem1).name + "*"):
                 try:
@@ -2074,6 +2324,35 @@ def _fine_valley_huc12(code: str, row, root: str, dem_a: str, pa: dict,
         return {**out, "status": "failed",
                 "error": f"{type(exc).__name__}: {exc}"[:500],
                 "seconds": round(time.monotonic() - t0, 1)}
+
+
+def _mosaic_suspect(dem_dir: Path) -> bool:
+    """A 1 m mosaic made before v0.45 that skipped a tile on its footprint
+    alone: it can have holes the fixed download fills (dem_fetch)."""
+    try:
+        s = json.loads((Path(dem_dir) / "dem_sources.json").read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if int(s.get("fetch_version") or 1) >= 2:
+        return False
+    return any(t.get("why") == "covered by newer tiles"
+               for t in (s.get("tiles") or []))
+
+
+def _kept_mosaic(path: Path) -> dict | None:
+    """A 1 m mosaic already on disk that can be used again: it reads and it
+    was not made with the footprint bug. With what its download said."""
+    if not _readable(path) or _mosaic_suspect(path.parent):
+        return None
+    try:
+        s = json.loads((path.parent / "dem_sources.json").read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        s = {}
+    return {"dem": str(path), "coverage": s.get("coverage", 1.0),
+            "area_coverage": s.get("area_coverage"),
+            "fetch_version": s.get("fetch_version")}
 
 
 def _readable(path: Path) -> bool:
@@ -2153,15 +2432,47 @@ def _fine_valleys(root: Path, st: _Status, hucs, pa: dict, dem_a: str,
         lidar = sorted(h for h, v in st.data["huc12"].items()
                        if v.get("status") in ("done", "failed"))
         order += [h for h in lidar if h not in order]
+    rec["total"] = len(order)
     st.data["fine_valleys"] = rec
     st.save()
     breaks = (st.data.get("confinement") or {}).get("breaks") \
         if (st.data.get("confinement") or {}).get("applied") else None
-    breaks = list(breaks or pa.get("confinement_breaks") or PUBLISHED_BREAKS)
+    breaks = [float(b) for b in (breaks or pa.get("confinement_breaks")
+                                 or PUBLISHED_BREAKS)]
+    prev_breaks = rec.get("breaks")          # what the earlier records used
     rec["breaks"] = breaks
     codes = hucs["huc12"].astype(str)
-    todo = [c for c in order
-            if (rec["huc12"].get(c) or {}).get("status") not in ("done", "no lidar")]
+
+    def holed(code):
+        """Made on a 1 m mosaic with the footprint bug (before v0.45)."""
+        r = rec["huc12"].get(code) or {}
+        return (int(r.get("fetch_version") or 1) < 2
+                and _mosaic_suspect(root / "A_fine" / code / "dem"))
+
+    def stale(code):
+        """Typed with confinement breaks other than today's (level B run
+        again moves the calibration)."""
+        b = (rec["huc12"].get(code) or {}).get("breaks", prev_breaks)
+        return b is not None and [round(float(x), 6) for x in b] != \
+            [round(x, 6) for x in breaks]
+
+    def current(code):
+        r = rec["huc12"].get(code) or {}
+        return (r.get("status") in ("done", "no lidar") and not holed(code)
+                and (r.get("status") == "no lidar" or not stale(code)))
+
+    finished = [c for c in order if (rec["huc12"].get(c) or {}).get("status")
+                in ("done", "no lidar")]
+    redo = [c for c in finished if holed(c)]
+    if redo:
+        note(f"project: {len(redo)} {cell_m:g} m HUC12s again: their 1 m "
+             f"mosaic may have had holes (made before v0.45)")
+        rec["redone"] = sorted(set(rec.get("redone") or []) | set(redo))
+    moved = [c for c in finished if not holed(c) and not current(c)]
+    if moved:
+        note(f"project: {len(moved)} {cell_m:g} m HUC12s again: the confinement "
+             f"breaks are now {breaks}")
+    todo = [c for c in order if not current(c)]
     n_workers = int(workers) if workers else fine_workers(cell_m)
     n_workers = max(1, min(n_workers, len(todo) or 1))
     rec["workers"] = n_workers
@@ -2184,6 +2495,8 @@ def _fine_valleys(root: Path, st: _Status, hucs, pa: dict, dem_a: str,
         prev = rec["huc12"].get(code) or {}
         if r.get("status") == "failed" and prev.get("status") == "failed":
             r["retried"] = True
+        r["at"] = _now()                # when it finished: the run's pace
+        r["breaks"] = breaks
         rec["huc12"][code] = r
         done_n = sum(1 for v in rec["huc12"].values() if v.get("status") == "done")
         note(f"project: {cell_m:g} m valleys, HUC12 {code}: {r.get('status')} "
@@ -2269,7 +2582,7 @@ def _fine_valleys(root: Path, st: _Status, hucs, pa: dict, dem_a: str,
             continue
         rows.append({"huc12": code, "status": r.get("status"),
                      "pilot": code in rec["chosen"], "setting": why.get(code),
-                     "cell_m": r.get("cell_m"),
+                     "cell_m": r.get("cell_m"), "lidar_data": r.get("lidar_data"),
                      "inflow_corrected": (r.get("inflow") or {}).get("corrected"),
                      "seconds": r.get("seconds"), **(r.get("compare") or {})})
     if rows:
@@ -2391,6 +2704,22 @@ def _fine_lines(rec: dict | None) -> list[str]:
         lines += ["", f"Failed ({len(failed)}):", ""] + [f"- {f}" for f in failed[:20]]
         if len(failed) > 20:
             lines.append(f"- and {len(failed) - 20} more (project.json)")
+    part = sorted(code for code, r in rec["huc12"].items()
+                  if r.get("status") == "done" and r.get("lidar_data") is not None
+                  and float(r["lidar_data"]) < 0.9)
+    if part:
+        lines += ["", f"{len(part)} HUC12s have 1 m lidar over less than 90% of "
+                      f"their area (`lidar_data` in the comparison): their "
+                      f"{cell:g} m streams and valleys cover only that part, and "
+                      f"their stream km fall short of the 10 m pass's: "
+                      + ", ".join(part[:30]) + (" ..." if len(part) > 30 else "")
+                      + "."]
+    if rec.get("redone"):
+        lines += ["", f"{len(rec['redone'])} HUC12s were run again on a fixed 1 m "
+                      f"mosaic: before v0.45 the download skipped a lidar tile "
+                      f"whose footprint a newer tile covered, even where the "
+                      f"newer one had no data (lidar projects that overlap, or "
+                      f"meet at a UTM zone line)."]
     if rec.get("stopped"):
         lines += ["", f"Stopped early: the drive is {rec['stopped']}; run the "
                       f"project again to carry on."]
@@ -2544,6 +2873,20 @@ def _report(root: Path, st: _Status, merged: dict, cell_a: float,
         "## Level B by HUC12", "",
         ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())) or "none run",
         ""]
+    redone = st.data.get("level_b_redone") or []
+    if redone:
+        lines += [f"{len(redone)} HUC12s were measured again on a fixed 1 m "
+                  f"mosaic (v0.45): before, the download skipped a lidar tile "
+                  f"whose footprint a newer tile covered, even where the newer "
+                  f"one had no data, which left holes where lidar projects "
+                  f"overlap or meet at a UTM zone line.", ""]
+    part = sorted(c for c, v in b.items() if v.get("status") == "done"
+                  and v.get("lidar_data") is not None
+                  and float(v["lidar_data"]) < 0.9)
+    if part:
+        lines += [f"{len(part)} HUC12s have 1 m lidar data over less than 90% "
+                  f"of their area (`lidar_data` in project.json); their reaches "
+                  f"outside it have no stream type.", ""]
     lines += _pilot_lines(st.data.get("pilot") or {})
     lines += _confinement_lines(st.data.get("confinement"))
     lines += _fine_lines(st.data.get("fine_valleys"))

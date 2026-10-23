@@ -1,4 +1,4 @@
-# ArcGIS Pro test checklist (v0.42 beta)
+# ArcGIS Pro test checklist (v0.45 beta)
 
 About 30 minutes, on the Eagle Creek DEM (`DEM\EagleCreekDEM.tif`: 108
 million cells at 0.61 m, 40 km²). It runs every tool once. Use a new output
@@ -11,7 +11,7 @@ all that is needed to fix it.
 
 | # | Tool | Settings | Expect |
 |---|---|---|---|
-| 1 | 0 Setup ▸ Find the geolens environment | (none) | "geolens 0.44.0 found" |
+| 1 | 0 Setup ▸ Find the geolens environment | (none) | "geolens 0.45.0 found" |
 | 2 | 0 Setup ▸ Check memory before a run | DEM = Eagle Creek | "FITS comfortably", about 10 GB |
 | 3 | 2 Steps ▸ 1. Terrain, valley bottom and confinement | DEM; output folder `v30_test` | A few minutes. *Valley bottom* and *Reaches (confinement)* added, coloured. |
 | 4 | 2 Steps ▸ 1b. Calibrate confinement breaks | Run folder `v30_test`, breaks blank | A percentile table and five candidate splits in the messages. No layers. |
@@ -28,6 +28,9 @@ all that is needed to fix it.
 | 10 | 3 More tools ▸ Clip a DEM to one watershed | DEM; pour point = a point on a channel | *Watershed boundary* and the clipped DEM |
 | 11 | 1 Whole routine ▸ Run the whole routine | Eagle Creek; new folder `v30_whole` | Every layer from steps 3–7 at once |
 | 12 | 1 Whole routine ▸ Run a project area (by HUC12) | A small boundary (one ranch, 1–3 HUC12s); new folder `v30_project`; Level B *None: valleys only*; Watershed data *All* | Needs internet, 20–40 minutes. *Valley types*, *HUC12 status*, *HUC12 summary*, *Soils (SSURGO)*, *Soils with ecological sites* and, if anything burned, *Fire perimeters* added, and *Major streams* (one line per stream over 25 km², symbolise by `drainage_km2`) and *HUC12 sensitivity* (coloured by class; with 1–3 HUC12s it says "fewer than 3" and skips the ranking). `RESULTS.md` has a "Watershed data by HUC12" table with every step done and a "Stream power, major streams and the sensitivity table" section; `data\` holds `fire_huc12.csv` … `rap_huc12.csv`. Open *HUC12 summary*'s table: `prism_ppt_mm`, `atlas14_24h_100yr_mm`, `rap_bgr_recent` filled; *Valley types* now has `stream_id`, `stream_power_w_m`, `unit_stream_power_w_m2`. |
+| 13 | 1 Whole routine ▸ Run a project area (by HUC12) | The same boundary; new folder `v45_window`; Level B *None*; Watershed data *None*; **Run in its own window** ticked | The tool finishes in seconds and a black console window opens with "geolens run_project, attempt 1 of 5". ArcGIS Pro stays usable. The folder has `geolens_run.json` and `run_geolens.bat`. Close Pro while the window works: the window should keep going. If it stops with Pro, note it (then double-click `run_geolens.bat` to carry on). |
+| 14 | 1 Whole routine ▸ Check on a project run | Folder `v45_window`, while the window works and after it finishes | "A run is working in it now (process …)" while it runs, then "No run is working in it now" and a *Results:* line. |
+| 15 | 1 Whole routine ▸ Add a project's results to the map | Folder `v30_project` (step 12), then the same again with *Add to each layer's name* = `test` | Layers named "… - v30_project", coloured; *Valley extent (by valley type)* polygons just under the *Valley types* lines. The second run renames and re-colours the same layers and adds nothing. |
 
 Things most likely to need a fix (they could not be tested without ArcGIS
 Pro):

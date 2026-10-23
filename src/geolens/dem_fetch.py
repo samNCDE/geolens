@@ -17,7 +17,14 @@ result says how much of the area that was. Its tiles are one degree square,
 named by their north-west corner, so they need no search.
 
 Where several lidar projects overlap, the most recently published wins,
-cell by cell (a mosaic, not an average).
+cell by cell (a mosaic, not an average). A tile is skipped only when every
+cell it could fill inside the area is already filled with data: tile
+footprints are 10 km squares whatever the project flew, and a project near a
+UTM zone line delivers the same squares in both zones, the data in one of
+them. Until v0.45 a footprint covered by newer tiles was enough to skip a
+tile, which left holes wherever the newer one had no data there (Kingman,
+October 2026: the zone 11 tiles of a project straddling 114 W, and older
+projects under newer ones; mosaics 14-70% filled).
 
 UNITS
 -----
@@ -48,6 +55,9 @@ NED13_URL = ("https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/13/"
              "TIFF/current/{tile}/USGS_13_{tile}.tif")
 MAX_CELLS = 3_000_000_000
 NODATA = -9999.0
+# 2: tiles skipped by the data they would add, not their footprints (v0.45).
+# A mosaic without it in dem_sources.json may have holes: fetch it again.
+FETCH_VERSION = 2
 
 
 def _get_json(url: str, timeout: int = 60, retries: int = 3) -> dict:
@@ -110,6 +120,40 @@ def ned13_tiles(bbox_wgs84: tuple[float, float, float, float]) -> list[dict]:
                                 "minY": top - 1, "maxY": top},
                 "source": "1/3 arc-second"})
     return out
+
+
+def _inside(grid, window, geom):
+    """Cells of ``window`` whose centres are inside ``geom``."""
+    from rasterio.features import geometry_mask
+
+    r0, c0, h, w = window
+    return ~geometry_mask([geom.__geo_interface__], out_shape=(h, w),
+                          transform=grid.sub_transform(r0, c0))
+
+
+def _cells_to_fill(m, grid, window, part) -> bool:
+    """Whether a tile could still fill a cell: an empty cell inside both
+    the area and the tile's footprint (``part``)."""
+    r0, c0, h, w = window
+    empty = ~m.filled[r0:r0 + h, c0:c0 + w]
+    if not empty.any():
+        return False
+    return bool((empty & _inside(grid, window, part)).any())
+
+
+def _area_filled(m, grid, area) -> float:
+    """The share of the area (its cells' centres) with data in the mosaic,
+    on a thinned grid when the mosaic is large."""
+    step = max(1, int(math.ceil(math.sqrt(grid.cells / 2.5e7))))
+    filled = m.filled[::step, ::step]
+    from rasterio.features import geometry_mask
+    from rasterio.transform import from_origin
+
+    tr = from_origin(grid.left, grid.top, grid.res * step, grid.res * step)
+    inside = ~geometry_mask([area.__geo_interface__], out_shape=filled.shape,
+                            transform=tr)
+    n = int(inside.sum())
+    return float((filled & inside).sum()) / n if n else 0.0
 
 
 def _download(url: str, dest: Path, timeout: int = 300) -> Path:
@@ -221,29 +265,14 @@ def fetch_dem(
         note(f"elevations converted from metres to {z_unit} to match the CRS")
 
     tiles = list(lidar)
-    covered_lidar = None
-    for it in lidar:
-        bb = it.get("boundingBox") or {}
-        try:
-            fp = box(bb["minX"], bb["minY"], bb["maxX"], bb["maxY"])
-            covered_lidar = fp if covered_lidar is None else covered_lidar.union(fp)
-        except Exception:                                    # noqa: BLE001
-            pass
-    gap = area_wgs if covered_lidar is None else area_wgs.difference(covered_lidar)
-    gap_frac = gap.area / area_wgs.area if area_wgs.area else 0.0
-    if source == "1/3" or (source == "best" and gap_frac > 0.005):
-        tiles += ned13_tiles(gap.bounds if source == "best" else bbox)
-        if source == "best" and lidar:
-            warnings.append(
-                f"{gap_frac:.0%} of the area has no 3DEP 1 m lidar; it is "
-                f"filled from the 1/3 arc-second DEM (about 10 m), resampled "
-                f"to {cell_m:g} m. Channel measurements there are not lidar.")
-        elif source == "best":
+    # "best": the 1/3 arc-second DEM fills whatever the lidar leaves empty;
+    # a lidar tile's footprint says little about where it has data, so it
+    # is offered over the whole area and fills only the cells still empty.
+    if source == "1/3" or source == "best":
+        tiles += ned13_tiles(bbox)
+        if source == "best" and not lidar:
             warnings.append("No 3DEP 1 m lidar covers this area; the DEM is "
                             "the 1/3 arc-second (about 10 m) product.")
-    if source == "1m" and gap_frac > 0.005:
-        warnings.append(f"{gap_frac:.0%} of the area has no 3DEP 1 m lidar "
-                        f"and is left as nodata.")
 
     out = Path(guard.out_dir)
     tile_dir = Path(guard.write_path("dem_tiles"))
@@ -256,9 +285,12 @@ def fetch_dem(
     sources: list[dict] = []
     covered = None
     lidar_cells = 0
+    lidar_share = None
     with Mosaic(mosaic_path, grid, "float32", 1, NODATA, ["elevation"],
                 predictor=3) as m:
         for it in progress(tiles, label="DEM tiles"):
+            if it.get("source") == "1/3 arc-second" and lidar_share is None:
+                lidar_share = _area_filled(m, grid, area)
             bb = it.get("boundingBox") or {}
             try:
                 fp = _transform(to_out.transform,
@@ -268,12 +300,12 @@ def fetch_dem(
                 part = area
             if part.is_empty:
                 continue
-            if covered is not None and part.difference(covered).area < 0.001 * part.area:
-                sources.append({"title": it.get("title"), "used": False,
-                                "why": "covered by newer tiles"})
-                continue
             window = grid.window_for(part.bounds)
             if window is None:
+                continue
+            if covered is not None and not _cells_to_fill(m, grid, window, part):
+                sources.append({"title": it.get("title"), "used": False,
+                                "why": "its cells are filled already"})
                 continue
             url = it.get("downloadURL") or ""
             name = Path(urllib.parse.urlparse(url).path).stem or "tile"
@@ -314,8 +346,19 @@ def fetch_dem(
                             "url": url, "published": it.get("publicationDate"),
                             "tile": str(tile_path), "cells": n})
         coverage = m.coverage
+        area_coverage = _area_filled(m, grid, area)
+        if lidar_share is None:
+            lidar_share = area_coverage if source != "1/3" else 0.0
     filled = max(1, int(m.filled.sum()))
     lidar_frac = lidar_cells / filled
+    if source == "1m" and area_coverage < 0.995:
+        warnings.append(f"{1 - area_coverage:.0%} of the area has no 3DEP 1 m "
+                        f"lidar data and is left as nodata.")
+    elif source == "best" and lidar and lidar_share < 0.995:
+        warnings.append(
+            f"{1 - lidar_share:.0%} of the area has no 3DEP 1 m lidar data; it "
+            f"is filled from the 1/3 arc-second DEM (about 10 m), resampled to "
+            f"{cell_m:g} m. Channel measurements there are not lidar.")
     if coverage < 0.95:
         warnings.append(f"The mosaic covers {coverage:.0%} of its grid (the "
                         f"rest is outside the area or has no DEM).")
@@ -324,8 +367,10 @@ def fetch_dem(
         json.dump({"aoi": str(aoi), "bbox_wgs84": list(bbox), "source": source,
                    "crs": pcrs.to_string(), "cell_size_m": cell_m,
                    "z_unit": z_unit, "lidar_fraction": lidar_frac,
-                   "coverage": coverage, "tiles": sources,
-                   "warnings": warnings}, fh, indent=1, default=str)
+                   "coverage": coverage, "area_coverage": area_coverage,
+                   "lidar_share": lidar_share, "fetch_version": FETCH_VERSION,
+                   "tiles": sources, "warnings": warnings}, fh, indent=1,
+                  default=str)
     note(f"DEM: {sum(1 for s in sources if s.get('used'))} tile(s), "
          f"{lidar_frac:.0%} lidar, {grid.width:,} x {grid.height:,} at "
          f"{cell_m:g} m")
@@ -333,5 +378,7 @@ def fetch_dem(
             "sources": sources_path, "crs": pcrs.to_string(),
             "cell_size_m": cell_m, "z_unit": z_unit,
             "lidar_fraction": lidar_frac, "coverage": coverage,
+            "area_coverage": area_coverage, "lidar_share": lidar_share,
+            "fetch_version": FETCH_VERSION,
             "n_tiles": sum(1 for s in sources if s.get("used")),
             "seconds": time.monotonic() - t0, "warnings": warnings}

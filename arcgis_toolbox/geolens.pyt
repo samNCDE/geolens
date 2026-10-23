@@ -123,7 +123,7 @@ class Toolbox(object):
         self.alias = "geolens"
         self.tools = [FetchDEM, NaipImagery, Sentinel1Radar, SsurgoSoils,
                       FindEnvironment, CheckServices, RunProject,
-                      SaveEarthdataLogin, CheckMemory, CoarsenDEM, WholeRoutine,
+                      CheckProjectRun, AddProjectResults, SaveEarthdataLogin, CheckMemory, CoarsenDEM, WholeRoutine,
                       Step1Terrain, Step1bCalibrate, Step2ValleyTypes, Step3StreamTypes,
                       Step4Stability, Step5Gullies, Step6Riparian,
                       AlluvialFans, WatershedClip, Headcuts, SectionPlots,
@@ -941,7 +941,13 @@ class RunProject(_Tool):
         "measured (the weights are written beside it to be argued with). "
         "Merged layers, a HUC12 status layer and RESULTS.md (what ran at "
         "what resolution, and every warning) go in the project folder. "
-        "Run it again on the same folder to carry on where it stopped.")
+        "Valleys can be mapped again on the lidar at a finer cell (3 m), "
+        "for a pilot or every HUC12 with lidar, and compared with 10 m. A "
+        "new folder can start from an earlier project's measurements. Tick "
+        "'Run in its own window' for a long run: it goes on in a window of "
+        "its own, ArcGIS Pro stays free, and run_geolens.bat in the folder "
+        "carries it on after a stop. Run it again on the same folder to "
+        "carry on where it stopped.")
 
     LEVEL_B = [("Pilot: HUC12s that together represent the area "
                 "(landscape projects)", "pilot:representative"),
@@ -963,8 +969,8 @@ class RunProject(_Tool):
             ("Pilot: three headwater HUC12s (a mountain one, a fan and "
              "piedmont one, an alluvial valley one), compared with 10 m",
              "pilot"),
-            ("Every HUC12 with lidar (the pilot first; hours to a day or "
-             "two, several HUC12s at once)", "all")]
+            ("Every HUC12 with lidar (the pilot first; a day or more for a "
+             "field office, several HUC12s at once)", "all")]
 
     def parameters(self):
         return [
@@ -988,6 +994,9 @@ class RunProject(_Tool):
               default=self.CURVES[0][0], choices=[c[0] for c in self.CURVES]),
             P("Watershed data per HUC12", "data", "GPString",
               default=self.DATA[0][0], choices=[c[0] for c in self.DATA]),
+            P("Run in its own window (long runs: ArcGIS Pro stays free, and "
+              "the run goes on if Pro is closed)", "own_window", "GPBoolean",
+              default=False),
             P("Stream threshold, km2", "threshold", "GPDouble", default=1.0,
               category=OPT),
             P("Stop level B after this many hours (0 = no limit)", "hours",
@@ -998,9 +1007,9 @@ class RunProject(_Tool):
               default=True, category=OPT),
             P("Fit the 10 m confinement breaks to the lidar pilots",
               "calibrate", "GPBoolean", default=True, category=OPT),
-            P("Keep each HUC12's 1 m DEM after its channels are measured "
-              "(about 300 MB each)", "keep_dem", "GPBoolean", default=False,
-              category=OPT),
+            P("Keep each HUC12's 1 m DEM (about 300 MB each; after a crash "
+              "it is used again, not downloaded again)", "keep_dem",
+              "GPBoolean", default=False, category=OPT),
             P("Major streams: drainage at the mouth, km2", "major_km2",
               "GPDouble", default=25.0, category=OPT),
             P("Sensitivity weights file (JSON: summary column -> weight; "
@@ -1009,9 +1018,17 @@ class RunProject(_Tool):
             P("Level A cell size, m (10 = the 1/3 arc-second DEM; 20 or 30 "
               "for a reconnaissance run on a laptop)", "cell_a", "GPDouble",
               default=10.0, category=OPT),
-            P("Valleys again on the lidar at 3 m", "fine", "GPString",
+            P("Valleys again on the lidar", "fine", "GPString",
               default=self.FINE[0][0], choices=[c[0] for c in self.FINE],
               category=OPT),
+            P("Lidar valleys: cell size, m (the 1 m lidar resampled; 3 m "
+              "tested)", "fine_cell", "GPDouble", default=3.0, category=OPT),
+            P("Lidar valleys: HUC12s at once (0 = as many as memory and "
+              "cores allow)", "fine_workers", "GPLong", default=0,
+              category=OPT),
+            P("Level B again where the 1 m lidar mosaic had holes (projects "
+              "run before v0.45; hours)", "redo_holes", "GPBoolean",
+              default=False, category=OPT),
             D("Valley types", "out_valley_types"),
             D("Stream types", "out_stream_types"),
             D("Stream-type sections", "out_sections"),
@@ -1023,8 +1040,8 @@ class RunProject(_Tool):
             D("Fire perimeters", "out_fire"),
             D("Major streams", "out_major"),
             D("HUC12 sensitivity", "out_sensitivity"),
-            D("Valley types at 3 m (pilot)", "out_valley_types_3m"),
-            D("Valley extent at 3 m (pilot)", "out_valley_extent_3m"),
+            D("Valley types on the lidar", "out_valley_types_3m"),
+            D("Valley extent on the lidar", "out_valley_extent_3m"),
         ]
 
     def updateMessages(self, parameters):
@@ -1046,6 +1063,17 @@ class RunProject(_Tool):
                 v["copy_from"].setWarningMessage(
                     "The project folder already has a project.json: the run "
                     "carries on from that, and this folder is not used.")
+        cell = v["fine_cell"].value
+        if cell is not None and not 1.0 <= float(cell) <= 10.0:
+            v["fine_cell"].setErrorMessage(
+                "Between 1 and 10 m: the lidar is 1 m, and at 10 m the valleys "
+                "are no finer than level A's.")
+        long_run = (ga.choice(v["level_b"], self.LEVEL_B) == "all"
+                    or ga.choice(v["fine"], self.FINE) == "all")
+        if long_run and not v["own_window"].value:
+            v["own_window"].setWarningMessage(
+                "Every HUC12 can take a day or more: tick this so ArcGIS Pro "
+                "stays free and the run goes on if Pro is closed.")
 
     def execute(self, parameters, messages):
         v = ga.by_name(parameters)
@@ -1059,7 +1087,8 @@ class RunProject(_Tool):
                    else None if geo == ga.GEOLOGY[1] else "auto")
         level_b, _, pilot_by = ga.choice(v["level_b"],
                                          self.LEVEL_B).partition(":")
-        res = ga.run("run_project", {
+        cell = float(v["fine_cell"].value or 3.0)
+        kw = {
             "boundary": boundary, "where": ga.text(v["where"]) or None,
             "level_b": level_b,
             "pilot_count": int(v["pilot"].value or 3),
@@ -1080,8 +1109,16 @@ class RunProject(_Tool):
                                if v["cell_a"].value and
                                float(v["cell_a"].value) > 10.0 else None),
             "fine_valleys": ga.choice(v["fine"], self.FINE) or "none",
+            "fine_cell_m": cell,
+            "fine_workers": int(v["fine_workers"].value or 0) or None,
             "copy_from": ga.text(v["copy_from"]) or None,
-        }, out, "project")
+            "redo_lidar_holes": bool(v["redo_holes"].value),
+        }
+        if v["own_window"].value:
+            ga.launch("run_project", kw, out,
+                      "project " + os.path.basename(os.path.normpath(out)))
+            return
+        res = ga.run("run_project", kw, out, "project")
         arcpy.AddMessage("level B: %s" % res.get("level_b"))
         arcpy.AddMessage("results: %s" % os.path.join(out, "RESULTS.md"))
         for name, key in (("out_valley_types", "valley_types"),
@@ -1095,9 +1132,83 @@ class RunProject(_Tool):
                           ("out_fire", "fire_perimeters"),
                           ("out_major", "major_streams"),
                           ("out_sensitivity", "huc12_sensitivity"),
-                          ("out_valley_types_3m", "valley_types_3m"),
-                          ("out_valley_extent_3m", "valley_extent_3m")):
+                          ("out_valley_types_3m", "valley_types_%gm" % cell),
+                          ("out_valley_extent_3m", "valley_extent_%gm" % cell)):
             ga.set_output(v, name, res.get(key))
+
+
+class CheckProjectRun(_Tool):
+    label = "Check on a project run"
+    category = "1 Whole routine"
+    description = (
+        "How far a project run has got, from its folder: whether a run is "
+        "working in it now (in ArcGIS Pro or in its own window), the steps "
+        "done, level B's HUC12s, the valleys on the lidar with their pace "
+        "and roughly how many hours are left, the free space and the last "
+        "warning. It only reads the folder, so it never disturbs the run.")
+
+    def parameters(self):
+        return [P("Project folder", "project", "DEFolder"),
+                D("A run is working in it now", "running", "GPBoolean"),
+                D("Hours to go, roughly (valleys on the lidar)", "hours_left",
+                  "GPDouble")]
+
+    def updateMessages(self, parameters):
+        _Tool.updateMessages(self, parameters)
+        v = ga.by_name(parameters)
+        folder = ga.text(v["project"])
+        if folder and not os.path.isfile(os.path.join(folder, "project.json")):
+            v["project"].setErrorMessage(
+                "Not a geolens project folder (no project.json yet). A run "
+                "just started may still be copying or fetching its boundary.")
+
+    def execute(self, parameters, messages):
+        v = ga.by_name(parameters)
+        folder = ga.text(v["project"])
+        res = ga.run("project_status", {"project_folder": folder}, folder,
+                     "checking the project")
+        for line in res.get("lines") or []:
+            arcpy.AddMessage(line)
+        v["running"].value = bool(res.get("running"))
+        v["hours_left"].value = (res.get("fine_valleys") or {}).get("hours_left")
+
+
+class AddProjectResults(_Tool):
+    label = "Add a project's results to the map"
+    category = "1 Whole routine"
+    description = (
+        "A finished project's results, added to the active map, named and "
+        "coloured: the HUC12 summary, sensitivity and status; the valley "
+        "extent polygons coloured like the valley types; the valley types "
+        "(and on the lidar, where that ran); stream types; stable / "
+        "unstable form; the major streams; and the review sample. Each "
+        "name ends with the folder's name (or what you give), so two runs "
+        "can sit side by side. Run it again to re-colour them: layers "
+        "already on the map are not added twice and keep their on / off. "
+        "Save the project to keep them.")
+
+    def parameters(self):
+        return [P("Project folder", "project", "DEFolder"),
+                P("Add to each layer's name (blank: the folder's name)", "tag",
+                  "GPString", required=False),
+                D("Layers", "added", "GPString")]
+
+    def updateMessages(self, parameters):
+        _Tool.updateMessages(self, parameters)
+        v = ga.by_name(parameters)
+        folder = ga.text(v["project"])
+        if folder and not os.path.isfile(os.path.join(folder, "project.json")):
+            v["project"].setErrorMessage("Not a geolens project folder (no "
+                                         "project.json).")
+
+    def execute(self, parameters, messages):
+        v = ga.by_name(parameters)
+        folder = ga.text(v["project"])
+        tag = ga.text(v["tag"]) or os.path.basename(os.path.normpath(folder))
+        names = ga.add_project_layers(folder, tag)
+        arcpy.AddMessage("%d layers. The project is not saved: save it to "
+                         "keep them." % len(names))
+        v["added"].value = "; ".join(names)
 
 
 class SaveEarthdataLogin(_Tool):

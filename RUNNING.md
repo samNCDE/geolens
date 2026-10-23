@@ -1465,7 +1465,58 @@ a run of a day or more, start it outside ArcGIS Pro (a .bat that runs
 saves each HUC12 as it finishes, retries the failed ones once, stops
 cleanly when the drive is nearly full, keeps Windows awake, and carries on
 from where it stopped when started again. Pause Windows Update for the
-duration.
+duration. From v0.45 the toolbox does this for you (below).
+
+### Long runs in a window of their own (v0.45)
+
+Tick *Run in its own window* on *Run a project area (by HUC12)* for
+anything that takes hours (level B on every HUC12, the valleys on the lidar
+over a whole office). The tool writes the call into the project folder
+(`geolens_run.json`) with a launcher beside it (`run_geolens.bat`), starts
+the launcher in a console window of its own and returns: ArcGIS Pro stays
+free, and the run is not tied to it. Leave the window open (closing it
+stops the run). After a stop, a crash or a reboot, double-click
+`run_geolens.bat`: the run carries on from the last finished step or
+HUC12. The launcher tries again by itself, a minute apart, up to five
+times; it does not when another run is working in the folder. It runs the
+code in the release folder the toolbox is in, so do not replace that
+folder's files while a run uses them (unzip a new release into a new
+folder).
+
+From a shell the same is `python -m geolens.job <folder>\geolens_run.json`
+(the call in that file), or `geolens project ...` as before.
+
+**How far has it got?** *Check on a project run* (or `geolens status
+<folder>`): whether a run is working in the folder now, the steps done,
+level B's HUC12s by status, the lidar valley pass (done, failed, to go,
+HUC12s an hour and roughly how many hours are left), the free space and
+the last warning. It only reads the folder and never disturbs the run.
+
+**The results on a map.** *Add a project's results to the map* adds a
+finished project's layers to the active map, named and coloured: the
+HUC12 summary, sensitivity and status (off), the valley extent polygons
+coloured like the valley types (just under the valley-type lines), the
+lidar valley layers, stream types and stability (off), the major streams
+and the review sample (off). Each name ends with the folder's name, so two
+runs can sit side by side. Run it again to re-colour; nothing is added
+twice and on/off is kept. Save the ArcGIS project to keep them.
+
+### Whole 1 m mosaics (v0.45)
+
+Before v0.45 the 1 m download skipped a lidar tile whenever newer tiles'
+footprints covered it. A 1 m tile's footprint is its 10 km square whatever
+the project flew, so where projects overlap, or where one project meets a
+UTM zone line and delivers the same squares in both zones (Kingman, at
+114 W), the mosaic had holes: the Kingman 3 m pass found mosaics 14-70%
+filled, and level B's sections fell on nodata ("unknown" reaches, and
+HUC12s that failed with "No channel sections could be sampled"). From
+v0.45 a tile is skipped only when every cell it could fill already has
+data, and `dem_sources.json` records `area_coverage`, the share of the
+area that has lidar. The valleys on the lidar redo any HUC12 made on a
+holed mosaic by themselves; level B does with `redo_lidar_holes`
+(toolbox Options ▸ *Level B again where the 1 m lidar mosaic had holes*;
+shell `--redo-lidar-holes`), which takes hours over a field office.
+`lidar_data` on each HUC12's records is the share of it with lidar data.
 
 ### A new project folder from an earlier one (v0.43.1)
 

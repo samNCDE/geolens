@@ -16,7 +16,7 @@ pre code { background: none; padding: 0; }
 a { color: #2a78d6; }
 </style></head><body>
 <h1>geolens — start here</h1>
-<p><em>Version 0.30 (beta). What it does, how to run it (from ArcGIS Pro, Jupyter or
+<p><em>Version 0.45 (beta). What it does, how to run it (from ArcGIS Pro, Jupyter or
 QGIS), and how much to trust each result. About ten minutes to read.</em></p>
 <p>geolens maps valley and channel form from a lidar DEM, built for the arid
 Southwest. It is open source (MIT), runs from a Jupyter notebook on your own
@@ -204,7 +204,7 @@ ArcGIS.</p>
     Add Toolbox</em> and choose <code>arcgis_toolbox\geolens.pyt</code> in the geolens
     folder.</li>
 <li><strong>Check it:</strong> run <em>0 Setup ▸ Find the geolens environment</em>. It should
-    report "geolens 0.44.0 found". If it can't find the environment, give it
+    report "geolens 0.45.0 found". If it can't find the environment, give it
     the environment's <code>python.exe</code>, which the installer prints. The tool
     remembers it.
     <em>0 Setup ▸ Check internet services</em> says which download services this
@@ -225,6 +225,16 @@ ArcGIS.</p>
     mouth (<code>major_streams</code>), and <code>huc12_sensitivity</code> ranks the HUC12s, with
     the weights written beside it for you to change. <code>RESULTS.md</code> in the
     folder says what ran at what resolution. Run it again to carry on.</p>
+<p><strong>Long runs:</strong> tick <em>Run in its own window</em>. The run goes on in a
+console window of its own and ArcGIS Pro stays free; if it stops (a
+reboot, a crash), double-click <code>run_geolens.bat</code> in the project folder
+to carry on. <em>Check on a project run</em> says how far it has got and
+roughly how long is left, and <em>Add a project's results to the map</em>
+adds the finished layers, named and coloured. Under <em>Options</em>, <em>Valleys
+again on the lidar</em> maps the valleys a second time on the 1 m lidar
+resampled to 3 m (a pilot, or every HUC12 with lidar) and compares
+them with 10 m; <em>Start from an earlier project folder</em> starts a new
+folder from an earlier run's measurements without changing it.</p>
 <p><strong>Or run the whole routine</strong> on one DEM (<em>1 Whole routine</em>), or <strong>one step
 at a time</strong> (<em>2 Steps</em>):</p>
 <table>
@@ -429,8 +439,11 @@ runs/                 what was run, with which settings, how long it took
 <li><a href="OVERVIEW.md">OVERVIEW.md</a>: what each step does and what to trust, in more
   depth.</li>
 <li><a href="RUNNING.md">RUNNING.md</a>: every step and parameter, with tuning tables.</li>
-<li><code>docs/geolens_technical_summary_v0.40.pdf</code>: the methods and references,
-  including the bankfull method and the stable/unstable table.</li>
+<li><code>docs/geolens_how_to_use.pdf</code>: a step-by-step guide to running a
+  project and reading its results.</li>
+<li><code>docs/geolens_methods_v0.45.pdf</code>: the methods and references,
+  including the bankfull method, the stable/unstable table and the
+  project run.</li>
 <li><a href="NEXT.md">NEXT.md</a>: the working log — what changed in each version and what
   is known to be weak.</li>
 </ul>

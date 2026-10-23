@@ -1617,6 +1617,7 @@ def run_project(
     fine_cell_m: float = 3.0,
     fine_workers: int | None = None,
     copy_from: str | None = None,
+    redo_lidar_holes: bool = False,
 ) -> dict[str, Any]:
     """A whole project area, any size: valleys everywhere, channels on lidar.
 
@@ -1670,7 +1671,10 @@ def run_project(
     carried into each tile, the 1 m DEMs kept with ``keep_lidar_dem``.
     ``copy_from`` starts a new project folder from an earlier one: its
     level A, level B, soils and data are copied (the earlier folder is only
-    read) and this run carries on from them.
+    read) and this run carries on from them. ``redo_lidar_holes`` runs level
+    B again where the 1 m mosaic was made before v0.45 and could have holes
+    (a lidar tile skipped on its footprint where lidar projects overlap or
+    meet at a UTM zone line); the finer valley pass redoes those anyway.
     """
     from .project import run_project as _rp
 
@@ -1688,7 +1692,19 @@ def run_project(
                level_a_cell_m=level_a_cell_m, fine_valleys=fine_valleys,
                fine_huc12s=fine_huc12s, fine_count=fine_count,
                fine_cell_m=fine_cell_m, fine_workers=fine_workers,
-               copy_from=copy_from)
+               copy_from=copy_from, redo_lidar_holes=redo_lidar_holes)
+
+
+def project_status(project_folder: str) -> dict[str, Any]:
+    """How far a project run has got, read from its folder alone (it never
+    interferes with a run going on there): whether a run is working in it
+    now, the steps done, level B's HUC12s by status, the lidar valley pass
+    (done, failed, to go, its pace and roughly how many hours are left),
+    the free space on the drive and the last warning. ``lines`` is the same
+    in a few sentences."""
+    from .project import project_status as _ps
+
+    return _ps(project_folder)
 
 
 def check_services(timeout: int = 20) -> dict[str, Any]:
