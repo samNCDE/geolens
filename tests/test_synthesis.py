@@ -257,6 +257,11 @@ def test_synthesize_writes_the_layers_and_the_weights(tmp_path):
                    hucs=hucs, min_drainage_km2=20.0)
     assert r["major_streams_n"] == 2
     assert (merged / "major_streams.gpkg").exists()
+    # the mouth's HUC12 from the polygons (v0.43): the traced reaches carry
+    # no code, and on the Kingman v0.42 run every one was blank
+    ms = gpd.read_file(merged / "major_streams.gpkg")
+    assert ms["huc12_mouth"].notna().all()
+    assert set(ms["huc12_mouth"]) <= {"150100010101", "150100010102"}
     back = gpd.read_file(clipped)
     assert "stream_id" in back.columns and "unit_stream_power_w_m2" in back.columns
     assert len(back) == 9, "the clipped layer keeps its rows"

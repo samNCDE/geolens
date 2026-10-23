@@ -341,6 +341,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--cell-a", type=float, default=None,
                    help="level A grid in metres (default 10; 20 or 30 for a "
                         "reconnaissance run on a laptop or a cloud runner)")
+    s.add_argument("--fine-valleys", default="none",
+                   choices=["none", "pilot", "listed"],
+                   help="valleys again on the lidar at --fine-cell for a pilot "
+                        "of headwater HUC12s (one mountain, one fan and "
+                        "piedmont, one alluvial valley) or the --fine-huc12s "
+                        "listed, compared with the 10 m pass")
+    s.add_argument("--fine-huc12s", default=None,
+                   help="comma-separated HUC12s for --fine-valleys listed")
+    s.add_argument("--fine-count", type=int, default=3)
+    s.add_argument("--fine-cell", type=float, default=3.0,
+                   help="cell size of the finer valley pass, m (default 3)")
 
     sub.add_parser("backends", help="show which flow-routing backends are installed")
     s = sub.add_parser("history", help="what has been run in this output directory")
@@ -635,7 +646,9 @@ def main(argv: list[str] | None = None) -> int:
                 keep_lidar_dem=True if args.keep_lidar_dem else None,
                 major_streams_km2=args.major_km2,
                 sensitivity_weights=args.weights,
-                level_a_cell_m=args.cell_a)
+                level_a_cell_m=args.cell_a,
+                fine_valleys=args.fine_valleys, fine_huc12s=args.fine_huc12s,
+                fine_count=args.fine_count, fine_cell_m=args.fine_cell)
             _print({"project": r.get("project"),
                     "results": str(out / "RESULTS.md"),
                     "huc12_summary": r.get("huc12_summary"),

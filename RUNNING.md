@@ -1426,6 +1426,30 @@ repo; every download the runner makes is public (no login is needed for
 any of them, and none is used). It has not been run yet: the first
 dispatch is its test, and the repo must be on GitHub (Sam's push) first.
 
+### Valleys on the lidar at 3 m, a pilot (v0.43)
+
+Level A measures the valleys on the 10 m DEM, so a valley under three
+cells wide (30 m) is not resolved and the valley polygons are 10 m
+stair-steps. A whole field office at 1 m cannot run in one piece (Kingman
+would be about 23 billion cells), so the finer valley pass runs HUC12 by
+HUC12: `fine_valleys="pilot"` (toolbox Options ▸ *Valleys again on the
+lidar at 3 m*; shell `--fine-valleys pilot`) fetches each chosen HUC12's
+3DEP lidar onto a 3 m grid and runs the same valley pass on it, with the
+project's stream threshold and confinement breaks. The pilot is three
+headwater HUC12s with lidar: the most confined, the most fan and
+piedmont, the most alluvial valley. Headwater, because a tile cut to one
+HUC12 only knows the drainage inside it, and a main stem coming in from
+upstream would start with a fraction of its real drainage. RESULTS.md
+compares each with the 10 m pass (valley type and confinement agreement
+by stream length, confined and unresolved shares, valley width, valley
+area, the largest type changes), the table is
+`A_fine/comparison_3m.csv`, and the layers are `merged/valley_types_3m`
+and `merged/valley_extent_3m`. `fine_valleys="listed"` with
+`fine_huc12s` runs it on HUC12s of your choosing (mind the drainage of
+one that is not a headwater). Whether a whole office at 3 m is worth it
+is the pilot's question; that run needs the drainage from the HUC12s
+above carried into each tile first.
+
 ### Portable: everything on one drive (v0.33)
 
 `setup_portable.bat` builds `env` (Python and every library) inside the

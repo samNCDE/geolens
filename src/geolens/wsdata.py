@@ -139,6 +139,39 @@ def _polygonal(geom):
     return None
 
 
+def _repair_polygon(geom):
+    """A valid, polygon-only version of one perimeter, or None.
+
+    GEOS repairs most broken perimeters with make_valid, but on some it
+    throws "Overlay input is mixed-dimension" itself (the Kingman v0.42 run:
+    the fire step failed that way twice, after the v0.41 fix that only
+    cleaned make_valid's output). So each perimeter is repaired on its own,
+    the structure method first (polygons stay polygons), then the classic
+    zero buffer, and one that cannot be repaired is dropped, not the step.
+    """
+    import shapely
+
+    if geom is None or geom.is_empty:
+        return None
+    try:
+        if geom.is_valid:
+            return _polygonal(geom)
+    except Exception:                                        # noqa: BLE001
+        pass
+    tries = (lambda g: shapely.make_valid(g, method="structure",
+                                          keep_collapsed=False),
+             lambda g: g.buffer(0),
+             lambda g: shapely.make_valid(g))
+    for fix in tries:
+        try:
+            out = _polygonal(fix(geom))
+        except Exception:                                    # noqa: BLE001
+            continue
+        if out is not None and not out.is_empty:
+            return out
+    return None
+
+
 def fire_history(hucs, out_dir: Path, timeout: int = 120,
                  query: Callable | None = None) -> dict[str, Any]:
     """NIFC fire perimeters over the HUC12s, and per HUC12 the share burned
@@ -184,14 +217,16 @@ def fire_history(hucs, out_dir: Path, timeout: int = 120,
                       else pd.Series(float("nan"), index=g.index))
     g["incident"] = g[ncol] if ncol else ""
     g = g[g.geometry.notna() & ~g.geometry.is_empty]
-    g["geometry"] = g.geometry.make_valid() if hasattr(g.geometry, "make_valid") \
-        else g.geometry.buffer(0)
     # make_valid turns a self-touching perimeter into a GeometryCollection
     # of polygons AND the slivers it cut off as lines; a union over those
     # is "mixed-dimension" and GEOS refuses it (the Kingman v0.38.1 run's
-    # fire step). Keep the area only.
-    g["geometry"] = g.geometry.apply(_polygonal)
-    g = g[g.geometry.notna() & ~g.geometry.is_empty]
+    # fire step), and on some perimeters make_valid itself throws that.
+    # Each perimeter is repaired on its own and only its area kept.
+    n_in = len(g)
+    g["geometry"] = [_repair_polygon(x) for x in g.geometry]
+    g = g[g.geometry.notna()]
+    g = g[~g.geometry.is_empty]
+    dropped = n_in - len(g)
     g[["fire_year", "incident", "geometry"]].to_file(path, driver="GPKG",
                                                       layer="fire_perimeters")
     gu = g.to_crs(utm)
@@ -206,10 +241,20 @@ def fire_history(hucs, out_dir: Path, timeout: int = 120,
             s = sub[mask]
             if s.empty:
                 return 0.0
-            return round(float(s.geometry.union_all().intersection(geom).area
-                               if hasattr(s.geometry, "union_all") else
-                               s.geometry.unary_union.intersection(geom).area)
-                         / area, 4)
+            try:
+                u = (s.geometry.union_all() if hasattr(s.geometry, "union_all")
+                     else s.geometry.unary_union)
+                a = u.intersection(geom).area
+            except Exception:                                # noqa: BLE001
+                # One perimeter GEOS still refuses must not lose the HUC12:
+                # the burned area as the sum of the overlaps, capped below.
+                a = 0.0
+                for x in s.geometry:
+                    try:
+                        a += x.intersection(geom).area
+                    except Exception:                        # noqa: BLE001
+                        continue
+            return round(min(float(a) / area, 1.0), 4)
 
         yr = sub["fire_year"]
         names = {(y, str(n).strip().lower()) for y, n in
@@ -222,6 +267,7 @@ def fire_history(hucs, out_dir: Path, timeout: int = 120,
             "fire_count": len(names),
             "fire_last_year": int(yr.max()) if yr.notna().any() else None})
     return {"path": str(path), "perimeters": int(len(g)),
+            "dropped_unrepairable": int(dropped),
             "table": pd.DataFrame(rows).set_index("huc12")}
 
 

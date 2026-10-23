@@ -502,6 +502,12 @@ STYLES = {
               "colours": _MATERIAL, "alpha": 45},
     "major_streams": {"name": "Major streams", "single": "#08519c",
                       "width": 3.0},
+    "valley_types_3m": {"name": "Valley types at 3 m (pilot)",
+                        "field": "valley_type", "colours": _VALLEY,
+                        "width": 2.0},
+    "valley_extent_3m": {"name": "Valley extent at 3 m (pilot)",
+                         "field": "valley_type", "colours": _VALLEY,
+                         "alpha": 35},
     "huc12_sensitivity": {"name": "HUC12 sensitivity",
                           "field": "sensitivity_class",
                           "colours": {"high": "#b2182b", "moderate": "#f4a582",
@@ -542,10 +548,28 @@ def qml_categories(qml: Path):
     return rend.get("attr"), values, labels, other
 
 
+def plain_source(source: str) -> str:
+    """A layer's data source as a path: ArcGIS Pro reports a GeoPackage
+    layer as ``Instance=S:\\x\\a.gpkg,Dataset=main.%a`` (seen on Sam's
+    Kingman map, Oct 2026), which no path test matched, so GeoPackage
+    outputs were never named or coloured. That form becomes
+    ``S:\\x\\a.gpkg\\main.a``; anything else is returned as it is."""
+    src = str(source)
+    m = re.match(r"\s*Instance=(?P<db>[^,]+?\.gpkg)\s*,.*?Dataset=(?P<ds>[^,;]+)",
+                 src, flags=re.IGNORECASE)
+    if not m:
+        return src
+    ds = m.group("ds").strip()
+    if ds.lower().startswith("main."):
+        ds = ds[5:]
+    ds = ds.lstrip("%")
+    return os.path.join(m.group("db").strip(), f"main.{ds}")
+
+
 def qml_for(source: str) -> Path:
     """The QGIS style geolens wrote for a layer's data: beside its
     GeoPackage, or, for a copy in geolens.gdb, in _styles beside that."""
-    src = str(source)
+    src = plain_source(source)
     low = src.lower()
     if ".gpkg" in low:
         return Path(src[: low.index(".gpkg") + 5]).with_suffix(".qml")
@@ -556,7 +580,7 @@ def qml_for(source: str) -> Path:
 
 
 def _dataset_key(source: str) -> tuple[str, Path | None]:
-    src = str(source)
+    src = plain_source(source)
     low = src.lower()
     if ".gpkg" in low:
         gpkg = Path(src[: low.index(".gpkg") + 5])
@@ -654,7 +678,8 @@ def style_layer(lyr) -> None:
 
 
 def _norm(path: str) -> str:
-    return os.path.normcase(os.path.normpath(str(path).replace("/", os.sep)))
+    return os.path.normcase(os.path.normpath(
+        plain_source(path).replace("/", os.sep)))
 
 
 def style_outputs(parameters) -> None:

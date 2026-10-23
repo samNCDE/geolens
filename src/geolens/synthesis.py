@@ -817,6 +817,39 @@ def huc12_sensitivity(summary, weights: dict | str | Path | None = None,
 # -- the whole step ------------------------------------------------------------------------
 
 
+def _mouth_huc12(ms, hucs):
+    """``huc12_mouth`` from the HUC12 polygon each mouth point falls in.
+
+    The traced reaches are the level A pass's, which carry no HUC12 code,
+    so on the Kingman v0.42 run every major stream's huc12_mouth was blank;
+    the mouth point (``mouth_x``, ``mouth_y``) is always there.
+    """
+    import geopandas as gpd
+
+    have = ms["huc12_mouth"].notna() if "huc12_mouth" in ms.columns else None
+    if have is not None and bool(have.all()):
+        return ms
+    try:
+        h = _read(hucs)
+        h = h[["huc12", "geometry"]].copy()
+        h["huc12"] = h["huc12"].astype(str)
+        pts = gpd.GeoDataFrame(
+            {"_i": range(len(ms))},
+            geometry=gpd.points_from_xy(ms["mouth_x"], ms["mouth_y"]),
+            crs=ms.crs).to_crs(h.crs)
+        j = gpd.sjoin(pts, h, how="left", predicate="within") \
+            .drop_duplicates("_i").set_index("_i")["huc12"]
+        found = j.reindex(range(len(ms))).to_numpy()
+        ms = ms.copy()
+        if have is None:
+            ms["huc12_mouth"] = found
+        else:
+            ms.loc[~have.to_numpy(), "huc12_mouth"] = found[~have.to_numpy()]
+    except Exception:                                        # noqa: BLE001
+        pass                     # a blank code is not worth losing the layer
+    return ms
+
+
 def synthesize(out_dir: str | Path, valley_types, curve="arid_sw_az",
                merged=None, summary_csv=None, hucs=None,
                min_drainage_km2: float = 25.0, weights=None,
@@ -878,6 +911,8 @@ def synthesize(out_dir: str | Path, valley_types, curve="arid_sw_az",
 
     note("synthesis: major streams")
     ms = major_streams(full, min_drainage_km2)
+    if hucs is not None and len(ms):
+        ms = _mouth_huc12(ms, hucs)
     if flowlines is not None and Path(str(flowlines)).exists() and len(ms):
         note("synthesis: naming the major streams from the NHD")
         try:

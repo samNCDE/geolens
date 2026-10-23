@@ -959,6 +959,10 @@ class RunProject(_Tool):
             ("Vegetation cover and trends (RAP, 1986 on)", "rap"),
             ("None", "none")]
     CURVES = ga.CURVES
+    FINE = [("None", "none"),
+            ("Pilot: three headwater HUC12s (a mountain one, a fan and "
+             "piedmont one, an alluvial valley one), compared with 10 m",
+             "pilot")]
 
     def parameters(self):
         return [
@@ -1001,6 +1005,9 @@ class RunProject(_Tool):
             P("Level A cell size, m (10 = the 1/3 arc-second DEM; 20 or 30 "
               "for a reconnaissance run on a laptop)", "cell_a", "GPDouble",
               default=10.0, category=OPT),
+            P("Valleys again on the lidar at 3 m", "fine", "GPString",
+              default=self.FINE[0][0], choices=[c[0] for c in self.FINE],
+              category=OPT),
             D("Valley types", "out_valley_types"),
             D("Stream types", "out_stream_types"),
             D("Stream-type sections", "out_sections"),
@@ -1012,6 +1019,8 @@ class RunProject(_Tool):
             D("Fire perimeters", "out_fire"),
             D("Major streams", "out_major"),
             D("HUC12 sensitivity", "out_sensitivity"),
+            D("Valley types at 3 m (pilot)", "out_valley_types_3m"),
+            D("Valley extent at 3 m (pilot)", "out_valley_extent_3m"),
         ]
 
     def updateMessages(self, parameters):
@@ -1053,6 +1062,7 @@ class RunProject(_Tool):
             "level_a_cell_m": (float(v["cell_a"].value)
                                if v["cell_a"].value and
                                float(v["cell_a"].value) > 10.0 else None),
+            "fine_valleys": ga.choice(v["fine"], self.FINE) or "none",
         }, out, "project")
         arcpy.AddMessage("level B: %s" % res.get("level_b"))
         arcpy.AddMessage("results: %s" % os.path.join(out, "RESULTS.md"))
@@ -1066,7 +1076,9 @@ class RunProject(_Tool):
                           ("out_ecosites", "soils_ecosites"),
                           ("out_fire", "fire_perimeters"),
                           ("out_major", "major_streams"),
-                          ("out_sensitivity", "huc12_sensitivity")):
+                          ("out_sensitivity", "huc12_sensitivity"),
+                          ("out_valley_types_3m", "valley_types_3m"),
+                          ("out_valley_extent_3m", "valley_extent_3m")):
             ga.set_output(v, name, res.get(key))
 
 

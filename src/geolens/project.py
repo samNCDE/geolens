@@ -662,7 +662,8 @@ def _data_step(step: str, root: Path, inside, st: "_Status",
     info: dict[str, Any] = {}
     if step == "fire":
         r = wsdata.fire_history(inside, ddir, timeout=timeout)
-        info.update(path=r["path"], perimeters=r["perimeters"])
+        info.update(path=r["path"], perimeters=r["perimeters"],
+                    dropped_unrepairable=r.get("dropped_unrepairable", 0))
     elif step == "ecosites":
         soils = (st.step("soils") or {}).get("path")
         if not soils or not Path(soils).exists():
@@ -985,6 +986,10 @@ def run_project(boundary: str, where: str | None = None,
                 major_streams_km2: float = 25.0,
                 sensitivity_weights: dict | str | None = None,
                 level_a_cell_m: float | None = None,
+                fine_valleys: str = "none",
+                fine_huc12s: str | list | None = None,
+                fine_count: int = 3,
+                fine_cell_m: float = 3.0,
                 timeout: int = 120,
                 guard: Guard | None = None) -> dict[str, Any]:
     """Level A over the whole area, level B by HUC12, merged layers, a
@@ -1007,6 +1012,12 @@ def run_project(boundary: str, where: str | None = None,
     1/3 arc-second DEM's own; 20 or 30 m for a reconnaissance run on a
     laptop or a cloud runner, where the DEM is fetched straight onto the
     coarser grid; valleys narrower than three cells are not resolved).
+    ``fine_valleys``: "none" (default), "pilot" (``fine_count`` headwater
+    HUC12s with lidar, one per setting: mountain, fans and piedmonts,
+    alluvial valley) or "listed" (``fine_huc12s``): level A's valley pass
+    again on those HUC12s' lidar at ``fine_cell_m`` (3 m), compared with
+    the 10 m pass in RESULTS.md and ``A_fine/comparison_3m.csv``, merged as
+    ``valley_types_3m`` and ``valley_extent_3m``.
     Resumes a project folder that already has a ``project.json``."""
     import geopandas as gpd
 
@@ -1331,8 +1342,24 @@ def run_project(boundary: str, where: str | None = None,
                 st.data["confinement"] = cal
             st.save()
 
+    # 8b. valleys on the lidar at a finer cell, HUC12 by HUC12 (a pilot) -----------------------
+    fine_merged: dict[str, str] = {}
+    fmode = (fine_valleys or "none").lower()
+    if fmode in ("pilot", "listed"):
+        try:
+            fine_merged = _fine_valleys(
+                root, st, hucs, pa, dem_run, fmode, fine_huc12s,
+                int(fine_count), float(fine_cell_m), stream_threshold_km2,
+                keep_tiles=keep_lidar_tiles)
+            st.unwarn(f"The {float(fine_cell_m):g} m valley pass failed")
+        except Exception as exc:                             # noqa: BLE001
+            st.warn(f"The {float(fine_cell_m):g} m valley pass failed "
+                    f"({type(exc).__name__}: {str(exc)[:200]}); the 10 m "
+                    f"results are unaffected. Run the project again to retry.")
+
     # 9. merged layers, the HUC12 summary and the report ----------------------------------------
     merged = _merge(root, st, hucs, bnd, pa, cell_a, lidar_min_fraction)
+    merged.update(fine_merged)
     if st.step("soils"):
         merged["soils"] = st.step("soils")["path"]
     for step, key in (("ecosites", "soils_ecosites"), ("fire", "fire_perimeters")):
@@ -1453,6 +1480,338 @@ def _level_b(code, row, root: Path, dem_a: str, pa: dict, curve,
     except Exception as exc:                                 # noqa: BLE001
         return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:500],
                 "seconds": round(time.monotonic() - t0, 1)}
+
+
+# -- valleys on the lidar at a finer cell (v0.43) -------------------------------------
+#
+# Level A's valleys are measured on the 10 m DEM: 11% of Kingman's stream
+# length is in valleys narrower than three 10 m cells, the 10 m confined
+# class held 0.1% of the length while the lidar sections found 13% of the
+# measured reaches entrenched, and the valley polygons are 10 m stair-steps
+# at 1:8,000. A whole field office at 1 m is ~23 billion cells (the 10 m
+# pass needed ~70 GB for 0.4 billion), so the finer pass runs HUC12 by
+# HUC12 on the lidar resampled to a few metres. A tile cut to one HUC12
+# only knows the drainage it holds, so the pilot takes headwater HUC12s,
+# which hold all of theirs, and compares each with the 10 m pass.
+
+FINE_CELL_M = 3.0
+SETTINGS = (("mountain (confined valley types)",
+             lambda lt: lt.str.startswith("C-")),
+            ("fans and piedmonts", lambda lt: lt.isin(["U-AL-IF", "U-AL-AF"])),
+            ("alluvial valley", lambda lt: lt == "U-AL-AD"))
+
+
+def _fine_pilot(hucs, st: _Status, pa: dict, count: int = 3
+                ) -> tuple[list[str], dict]:
+    """Headwater HUC12s whose channels level B measured on lidar, one per
+    setting: the most confined, the most fan and piedmont, the most
+    alluvial valley (by 10 m stream length); more than three fill with the
+    HUC12s with the most stream."""
+    import geopandas as gpd
+
+    codes = hucs["huc12"].astype(str)
+    lidar = {h for h, v in st.data["huc12"].items()
+             if v.get("status") == "done" and float(v.get("lidar") or 0) >= 0.95}
+    fed = (set(hucs["tohuc"].dropna().astype(str))
+           if "tohuc" in hucs.columns else set())
+    cands = [c for c in codes if c in lidar and c not in fed]
+    basis = "headwater HUC12s with lidar"
+    if not cands:
+        cands, basis = sorted(lidar), "HUC12s with lidar (no headwater one)"
+    if not cands:
+        return [], {"basis": "no HUC12 has had its channels measured on lidar"}
+    vt = gpd.read_file(pa["valley_types"], columns=["landscape_type"])
+    poly = hucs[codes.isin(cands)][["huc12", "geometry"]].to_crs(vt.crs)
+    poly["huc12"] = poly["huc12"].astype(str)
+    pts = gpd.GeoDataFrame(
+        {"lt": vt["landscape_type"].fillna("").astype(str),
+         "km": vt.geometry.length / 1000.0},
+        geometry=vt.geometry.centroid, crs=vt.crs)
+    j = gpd.sjoin(pts, poly, how="inner", predicate="within")
+    tot = j.groupby("huc12")["km"].sum()
+    if tot.empty:
+        return [], {"basis": f"{basis}, but none with 10 m reaches in it"}
+    # enough stream to say anything (20 km; less on a small project)
+    tot = tot[tot >= min(20.0, 0.5 * float(tot.max()))]
+    chosen: list[str] = []
+    why: dict[str, str] = {}
+    for name, rule in SETTINGS:
+        if len(chosen) >= count:
+            break
+        s = (j[rule(j["lt"])].groupby("huc12")["km"].sum() / tot) \
+            .reindex(tot.index).fillna(0.0).drop(labels=chosen, errors="ignore")
+        if s.empty or s.max() <= 0:
+            continue
+        code = str(s.idxmax())
+        chosen.append(code)
+        why[code] = f"{name}: {100 * s.max():.0f}% of its stream length"
+    for code in tot.sort_values(ascending=False).index:
+        if len(chosen) >= count:
+            break
+        if code not in chosen:
+            chosen.append(str(code))
+            why[str(code)] = f"{tot[code]:.0f} km of stream"
+    return chosen, {"basis": basis, "why": why}
+
+
+def _compare_valleys(coarse_vt: str, fine_vt: str, poly, cell_coarse: float,
+                     cell_fine: float, coarse_extent: str | None = None,
+                     fine_extent: str | None = None) -> dict:
+    """The fine pass against the 10 m one inside one HUC12: stream length,
+    valley type and confinement agreement (each fine reach against the
+    nearest 10 m reach within three 10 m cells, by length), confined and
+    unresolved shares, valley width, valley extent area."""
+    import geopandas as gpd
+
+    c = gpd.read_file(coarse_vt, bbox=tuple(poly.to_crs(
+        gpd.read_file(coarse_vt, rows=1).crs).total_bounds))
+    f = gpd.read_file(fine_vt).to_crs(c.crs)
+    area = poly.to_crs(c.crs).geometry.iloc[0]
+    c = c[c.geometry.centroid.within(area)].copy()
+    f = f[f.geometry.centroid.within(area)].copy()
+    out: dict[str, Any] = {}
+    for tag, g, cell in (("10m", c, cell_coarse), ("fine", f, cell_fine)):
+        g["_km"] = g.geometry.length / 1000.0
+        km = float(g["_km"].sum())
+        out[f"km_{tag}"] = round(km, 1)
+        if km and "confinement" in g.columns:
+            for k in ("confined", "partly confined", "unconfined"):
+                out[f"{k.replace(' ', '_')}_{tag}"] = round(
+                    float(g.loc[g["confinement"] == k, "_km"].sum() / km), 3)
+        if km and "valley_width_m" in g.columns:
+            w = g["valley_width_m"].astype(float)
+            out[f"unresolved_{tag}"] = round(
+                float(g.loc[~(w >= 3 * cell), "_km"].sum() / km), 3)
+    if len(f) and len(c):
+        mid = f.copy()
+        mid["geometry"] = f.geometry.interpolate(0.5, normalized=True)
+        keep = [k for k in ("landscape_type", "confinement", "valley_width_m")
+                if k in c.columns]
+        j = gpd.sjoin_nearest(mid, c[[*keep, "geometry"]], how="left",
+                              max_distance=3 * cell_coarse, distance_col="_d",
+                              lsuffix="f", rsuffix="c")
+        j = j[~j.index.duplicated()]
+        m = j["_d"].notna()
+        w = j.loc[m, "_km"]
+        out["matched_share"] = round(float(w.sum() / j["_km"].sum()), 3) \
+            if j["_km"].sum() else None
+        if w.sum():
+            for k in ("landscape_type", "confinement"):
+                if f"{k}_f" in j.columns and f"{k}_c" in j.columns:
+                    a = j.loc[m, f"{k}_f"].fillna("none").astype(str)
+                    b = j.loc[m, f"{k}_c"].fillna("none").astype(str)
+                    out[f"{k}_agreement"] = round(float(w[a == b].sum() / w.sum()), 3)
+            if "landscape_type_f" in j.columns and "landscape_type_c" in j.columns:
+                a = j.loc[m, "landscape_type_c"].fillna("none").astype(str)
+                b = j.loc[m, "landscape_type_f"].fillna("none").astype(str)
+                ch = a != b
+                pairs = (j.loc[m][ch].assign(_p=(a + " -> " + b)[ch])
+                         .groupby("_p")["_km"].sum().sort_values(ascending=False))
+                out["type_changes"] = [f"{p} ({km:.1f} km)"
+                                       for p, km in pairs.head(3).items()]
+            if "valley_width_m_f" in j.columns:
+                ratio = (j.loc[m, "valley_width_m_f"].astype(float)
+                         / j.loc[m, "valley_width_m_c"].astype(float))
+                ratio = ratio[(ratio > 0) & (ratio < 1e6)]
+                if len(ratio):
+                    out["valley_width_ratio_median"] = round(float(ratio.median()), 2)
+    for tag, p in (("10m", coarse_extent), ("fine", fine_extent)):
+        if p and Path(p).exists():
+            try:
+                e = gpd.read_file(p, bbox=tuple(poly.to_crs(
+                    gpd.read_file(p, rows=1).crs).total_bounds))
+                e = gpd.clip(e.to_crs(c.crs), area)
+                out[f"valley_km2_{tag}"] = round(float(e.geometry.area.sum()) / 1e6, 2)
+            except Exception:                                # noqa: BLE001
+                pass
+    return out
+
+
+def _fine_valley_huc12(code: str, hucs, root: Path, dem_a: str, pa: dict,
+                       cell_m: float, threshold_km2: float, breaks,
+                       keep_tiles: bool = False) -> dict:
+    """The landscape pass on one HUC12's lidar at ``cell_m``."""
+    from . import api
+
+    t0 = time.monotonic()
+    fdir = root / "A_fine" / code
+    fdir.mkdir(parents=True, exist_ok=True)
+    try:
+        import rasterio
+
+        with rasterio.open(dem_a) as src:
+            dem_crs = src.crs
+        row = hucs[hucs["huc12"].astype(str) == code]
+        if row.empty:
+            return {"status": "failed", "error": "not a HUC12 of this project"}
+        poly = row.iloc[[0]][["huc12", "geometry"]].to_crs(dem_crs)
+        poly_path = fdir / "huc12.gpkg"
+        poly.to_file(str(poly_path), driver="GPKG", layer="huc12")
+        with _out(fdir / "dem"):
+            d = api.fetch_dem(str(poly_path), source="1m", resolution_m=cell_m,
+                              crs=dem_a, buffer_m=250.0)
+        if not keep_tiles:
+            shutil.rmtree(Path(d["dem"]).parent / "dem_tiles", ignore_errors=True)
+        if float(d.get("coverage") or 0.0) < 0.05:
+            return {"status": "no lidar", "seconds": round(time.monotonic() - t0, 1)}
+        b1, b2 = breaks
+        with _out(fdir / "run"):
+            res = api.landscape_pass(
+                d["dem"], stream_threshold_km2=threshold_km2,
+                segment_length_m=500.0, confined_max=b1,
+                partly_confined_max=b2, valley_types=True, stream_types=False,
+                geology=pa.get("geology"), fans=True)
+        vt = (res.get("valley_types") or {}).get("segments")
+        warns = [str(w)[:300] for w in (res.get("warnings") or [])]
+        if not vt:
+            return {"status": "failed", "seconds": round(time.monotonic() - t0, 1),
+                    "error": ("the pass made no valley types: "
+                              + "; ".join(warns[:2]))[:500]}
+        out = {"status": "done", "cell_m": cell_m, "dem": d["dem"],
+               "valley_types": vt, "valley_extent": res.get("valley_extent"),
+               "warnings": warns[:6]}
+        try:
+            extent_10m = Path(pa["valley_types"]).parent.parent \
+                / "valley_extent_dir" / "valley_extent.gpkg"
+            out["compare"] = _compare_valleys(
+                pa["valley_types"], vt, poly, _cell_of(dem_a), _cell_of(d["dem"]),
+                coarse_extent=str(extent_10m) if extent_10m.exists() else None,
+                fine_extent=res.get("valley_extent"))
+        except Exception as exc:                             # noqa: BLE001
+            out["compare_failed"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+        out["seconds"] = round(time.monotonic() - t0, 1)
+        return out
+    except Exception as exc:                                 # noqa: BLE001
+        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:500],
+                "seconds": round(time.monotonic() - t0, 1)}
+
+
+def _cell_of(raster: str) -> float:
+    try:
+        return float(_cell_m(raster))
+    except Exception:                                        # noqa: BLE001
+        return 10.0
+
+
+def _fine_valleys(root: Path, st: _Status, hucs, pa: dict, dem_a: str,
+                  mode: str, listed, count: int, cell_m: float,
+                  threshold_km2: float, keep_tiles: bool = False) -> dict:
+    """Run the finer valley pass over the pilot (or listed) HUC12s and
+    merge what it made; returns the merged layers' paths."""
+    import geopandas as gpd
+    import pandas as pd
+
+    rec = st.data.get("fine_valleys") or {}
+    if rec.get("cell_m") != cell_m:
+        rec = {"cell_m": cell_m, "huc12": {}}
+    rec["mode"] = mode
+    if mode == "listed":
+        want = [h.strip() for h in (listed.split(",") if isinstance(listed, str)
+                                    else (listed or [])) if str(h).strip()]
+        rec["chosen"], rec["why"] = want, {"basis": "listed"}
+    elif not rec.get("chosen"):
+        note(f"project: choosing headwater HUC12s for the {cell_m:g} m valley pilot")
+        rec["chosen"], rec["why"] = _fine_pilot(hucs, st, pa, count)
+    st.data["fine_valleys"] = rec
+    st.save()
+    breaks = (st.data.get("confinement") or {}).get("breaks") \
+        if (st.data.get("confinement") or {}).get("applied") else None
+    breaks = list(breaks or pa.get("confinement_breaks") or PUBLISHED_BREAKS)
+    rec["breaks"] = breaks
+    for code in progress(rec["chosen"], label=f"{cell_m:g} m valley HUC12s"):
+        if (rec["huc12"].get(code) or {}).get("status") == "done":
+            continue
+        note(f"project: valleys at {cell_m:g} m on the lidar, HUC12 {code}")
+        rec["huc12"][code] = _fine_valley_huc12(
+            code, hucs, root, dem_a, pa, cell_m, threshold_km2, breaks,
+            keep_tiles)
+        st.save()
+    tag = f"{cell_m:g}m"
+    merged: dict[str, str] = {}
+    rows = []
+    for kind in ("valley_types", "valley_extent"):
+        parts = []
+        for code, r in rec["huc12"].items():
+            p = r.get(kind)
+            if r.get("status") == "done" and p and Path(p).exists():
+                g = gpd.read_file(p)
+                g["huc12"] = code
+                parts.append(g)
+        if parts:
+            g = gpd.GeoDataFrame(pd.concat(parts, ignore_index=True),
+                                 geometry="geometry", crs=parts[0].crs)
+            path = root / "merged" / f"{kind}_{tag}.gpkg"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            g.to_file(str(path), driver="GPKG", layer=f"{kind}_{tag}")
+            merged[f"{kind}_{tag}"] = str(path)
+    for code, r in rec["huc12"].items():
+        rows.append({"huc12": code, "status": r.get("status"),
+                     "setting": ((rec.get("why") or {}).get("why") or {}).get(code),
+                     **(r.get("compare") or {})})
+    if rows:
+        t = pd.DataFrame(rows)
+        t["type_changes"] = t.get("type_changes", pd.Series(dtype=object)) \
+            .apply(lambda v: "; ".join(v) if isinstance(v, list) else v)
+        csv = root / "A_fine" / f"comparison_{tag}.csv"
+        csv.parent.mkdir(parents=True, exist_ok=True)
+        t.to_csv(csv, index=False)
+        rec["comparison"] = str(csv)
+    st.data["fine_valleys"] = rec
+    st.save()
+    return merged
+
+
+def _fine_lines(rec: dict | None) -> list[str]:
+    """RESULTS.md: the finer valley pass against the 10 m one."""
+    if not rec or not rec.get("huc12"):
+        return []
+    cell = rec.get("cell_m", FINE_CELL_M)
+    basis = str((rec.get("why") or {}).get("basis") or "")
+    caveat = (" None qualified here, so a main stem entering one of these "
+              "HUC12s carries only the drainage inside it, which narrows its "
+              "channel and widens its confinement ratio."
+              if "no headwater" in basis else "")
+    lines = [f"## Valleys on the lidar at {cell:g} m ({rec.get('mode', 'pilot')})", "",
+             f"Level A's valley pass run again on the 3DEP lidar resampled to "
+             f"{cell:g} m, HUC12 by HUC12, with the same stream threshold and "
+             f"the confinement breaks {rec.get('breaks')}. Chosen from "
+             f"{basis}: a tile cut to one HUC12 only knows the drainage inside "
+             f"it, so the pilot takes HUC12s with nothing draining into "
+             f"them.{caveat} Agreement is by stream length, each {cell:g} m "
+             f"reach against the nearest 10 m reach. Layers "
+             f"`valley_types_{cell:g}m` and `valley_extent_{cell:g}m`; the "
+             f"table is `A_fine/comparison_{cell:g}m.csv`.", "",
+             "| HUC12 | Chosen for | Status | Stream km 10 m / fine | Valley type "
+             "agreement | Confinement agreement | Confined 10 m / fine | "
+             "Unresolved 10 m / fine | Valley width, fine / 10 m | Valley km2 10 m / fine |",
+             "|---|---|---|---|---|---|---|---|---|---|"]
+
+    def pct(v):
+        return "" if v is None else f"{100 * v:.0f}%"
+
+    why = (rec.get("why") or {}).get("why") or {}
+    for code, r in rec["huc12"].items():
+        c = r.get("compare") or {}
+        lines.append(
+            f"| {code} | {why.get(code, '')} | {r.get('status')} | "
+            f"{c.get('km_10m', '')} / {c.get('km_fine', '')} | "
+            f"{pct(c.get('landscape_type_agreement'))} | "
+            f"{pct(c.get('confinement_agreement'))} | "
+            f"{pct(c.get('confined_10m'))} / {pct(c.get('confined_fine'))} | "
+            f"{pct(c.get('unresolved_10m'))} / {pct(c.get('unresolved_fine'))} | "
+            f"{c.get('valley_width_ratio_median', '')} | "
+            f"{c.get('valley_km2_10m', '')} / {c.get('valley_km2_fine', '')} |")
+    changes = [f"{code}: {', '.join(r['compare']['type_changes'])}"
+               for code, r in rec["huc12"].items()
+               if (r.get("compare") or {}).get("type_changes")]
+    if changes:
+        lines += ["", "Largest valley type changes, 10 m -> fine:", ""]
+        lines += [f"- {c}" for c in changes]
+    failed = [f"{code}: {r.get('error')}" for code, r in rec["huc12"].items()
+              if r.get("status") == "failed"]
+    if failed:
+        lines += ["", "Failed:", ""] + [f"- {f}" for f in failed]
+    return lines + [""]
 
 
 def _merge(root: Path, st: _Status, hucs, bnd, pa: dict, cell_a: float,
@@ -1603,6 +1962,7 @@ def _report(root: Path, st: _Status, merged: dict, cell_a: float,
         ""]
     lines += _pilot_lines(st.data.get("pilot") or {})
     lines += _confinement_lines(st.data.get("confinement"))
+    lines += _fine_lines(st.data.get("fine_valleys"))
     lines += _data_lines(st, want_data or [])
     if merged.get("huc12_summary"):
         lines += ["## The HUC12 summary", "",

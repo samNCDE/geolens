@@ -119,6 +119,41 @@ def test_a_perimeter_that_make_valid_cuts_into_pieces_keeps_its_area(tmp_path):
     assert set(kept.geom_type) <= {"Polygon", "MultiPolygon"}
 
 
+def test_a_perimeter_make_valid_throws_on_is_repaired_or_dropped(tmp_path, monkeypatch):
+    """The Kingman v0.42 run: GEOS's make_valid itself threw "Overlay input
+    is mixed-dimension" on some NIFC perimeter, twice, and the whole fire
+    step failed. Each perimeter is now repaired on its own (zero buffer when
+    make_valid throws) and one nothing can repair is dropped, not the step."""
+    import shapely
+    from shapely.errors import GEOSException
+    from shapely.geometry import Polygon
+
+    def refuses(*a, **k):
+        raise GEOSException("IllegalArgumentException: Overlay input is "
+                            "mixed-dimension")
+
+    monkeypatch.setattr(shapely, "make_valid", refuses)
+    h = _hucs()
+    bowtie = Polygon([(405000, 3905000), (410000, 3910000), (410000, 3905000),
+                      (405000, 3910000)])
+    ok = box(401000, 3905000, 403000, 3907000)                 # 4 km2
+    fires = gpd.GeoDataFrame(
+        {"FIRE_YEAR_INT": [2015, 2020], "INCIDENT": ["Bow", "Ok"]},
+        geometry=[bowtie, ok], crs=UTM).to_crs(4326)
+    # a perimeter with no area at all (collinear, in the service's lon/lat)
+    flat = Polygon([(-113.9, 35.2), (-113.89, 35.21), (-113.88, 35.22)])
+    fires = gpd.GeoDataFrame(
+        {"FIRE_YEAR_INT": [2015, 2016, 2020], "INCIDENT": ["Bow", "Flat", "Ok"]},
+        geometry=[fires.geometry.iloc[0], flat, fires.geometry.iloc[1]], crs=4326)
+    r = wsdata.fire_history(h, tmp_path / "data", query=lambda *a, **k: fires)
+    assert r["dropped_unrepairable"] == 1                      # the flat one
+    assert r["perimeters"] == 2
+    share = r["table"].loc["150100000101", "fire_burned_share"]
+    assert 0.04 < share < 0.20                                 # Ok plus the bow tie's repair
+    kept = gpd.read_file(r["path"])
+    assert set(kept.geom_type) <= {"Polygon", "MultiPolygon"}
+
+
 def test_no_fires_is_unburned_everywhere(tmp_path):
     empty = gpd.GeoDataFrame(geometry=[], crs=4326)
     r = wsdata.fire_history(_hucs(), tmp_path / "data", query=lambda *a, **k: empty)

@@ -398,6 +398,26 @@ def test_spatial_reference_to_pyproj(tbx):
     assert ga.spatial_reference(p) == "PROJCS[...]"
 
 
+def test_a_geopackage_layer_source_as_arcgis_pro_reports_it(tbx):
+    """Sam's ArcGIS Pro reports a GeoPackage layer's dataSource as
+    ``Instance=...\\a.gpkg,Dataset=main.%a``. No path test matched it, so
+    the toolbox never named or coloured a GeoPackage output (Kingman v42
+    layers came in grey as "main.major_streams")."""
+    import geolens_arcgis as ga
+
+    src = r"Instance=S:\k\v42\merged\major_streams.gpkg,Dataset=main.%major_streams"
+    assert ga._dataset_key(src)[0] == "major_streams"
+    assert ga._style_key(ga._dataset_key(src)[0])[0] == "major_streams"
+    assert str(ga.qml_for(src)).endswith("major_streams.qml")
+    assert "Instance=" not in str(ga.qml_for(src))
+    plain = ga.plain_source(src)
+    assert plain.lower().replace("\\", "/").endswith("major_streams.gpkg/main.major_streams")
+    # the output parameter's path and the layer's source compare equal
+    assert ga._norm(src) == ga._norm(plain)
+    # anything else is left alone
+    assert ga.plain_source(r"S:\a\geolens.gdb\valley_types") == r"S:\a\geolens.gdb\valley_types"
+
+
 def test_calibrate_confinement_tool(tbx, tmp_path):
     run = tmp_path / "run"
     tool, params, v = _tool(tbx, "Step1Terrain", dem=str(DEM),

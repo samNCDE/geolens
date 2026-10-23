@@ -3,35 +3,24 @@
 **Start with [OVERVIEW.md](OVERVIEW.md)** — what the tool does, how to run it,
 and what to trust. This file is the working log behind it.
 
-## Pick up here (state at the end of the 21 Oct 2026 session)
+## Pick up here (state on 23 Oct 2026, Friday midday Arizona)
 
-**State.** v0.42.1 beta. The full test suite passes on Linux with numba
-0.61.2. **Work only on drive S:** (Sam's instruction; C: is nearly full).
-The release is unzipped at `S:\geolens\gl33` (the folder name stayed; the
-changed files of each release are committed into it, never while a run
-uses it). The zips and git bundles (`geolens_v0.37.1.bundle`, holding
-v0.30.0 to v0.37.1) are in `S:\geolens\Claude outputs`.
+**State.** v0.43.0 beta. **Work only on drive S:** (Sam's instruction; C:
+is nearly full). The toolbox folders `S:\geolens\gl33` (the one in Sam's
+kingman ArcGIS project) and `S:\geolens\gl42` both get each release's
+changed files, never while a run uses them. Zips and git bundles are in
+`S:\geolens\Claude outputs`.
 
-**Pick up here (21 Oct evening Arizona).**
-- `S:\kingman\geolens_v38` is running v0.38.1 (started 1:25 pm, level B
-  on every HUC12 with lidar, data steps, lidar calibration; about 8 to 9 am
-  on 22 Oct). Check-ins are scheduled into the session every two hours.
-  Do not start another run on that folder; do not change gl33 until it
-  ends (a module imported later would be a different version).
-- v0.39.0 (fans from the soils map) and v0.40.0 (stream power, major
-  streams, the sensitivity table; the network tracer and the drainage
-  per reach fixed, below) are released to `S:\geolens\Claude outputs`,
-  not gl33. After the run ends: put v0.40 into gl33 and run the project
-  tool once more on `geolens_v38`. TYPING 3 re-types everything in
-  minutes, the summary follows, and the new last step (stream power,
-  `major_streams`, `huc12_sensitivity`) runs on the finished layers. The
-  level A pass itself is not redone, so that run keeps the old tracer's
-  gaps (bridged in the synthesis) and the inherited drainage (corrected
-  there); the next whole run gets both right at the source.
-- The draft tables for Sam are in the scratchpad (`synth1/merged`: the
-  major streams, the sensitivity table on the first run's data, without
-  slope, RAP, fire or Atlas 14, which the v0.38.1 run brings). The
-  weights are a proposal for him to change.
+**Pick up here.**
+- `S:\kingman\geolens_v42` is the Kingman deliverable so far (v0.42.1,
+  whole field office, finished 23 Oct 12:15 am AZ); `geolens_v38` is
+  superseded. Review in the v0.43.0 entry below and in the project doc
+  `claude/geolens_status.md`.
+- At 5 pm AZ on 23 Oct the project tool runs once more on `geolens_v42`
+  with v0.43 and the 3 m valley pilot (see the v0.43.0 entry). After it:
+  review the pilot's comparison (RESULTS.md *Valleys on the lidar at
+  3 m*), then the validation sample for Sam, the form rules for the
+  "check" combinations and the sensitivity weights with him.
 - Done since: the methods write-up (v0.40, `docs/`), the reconnaissance
   option, the GitHub workflow and the NHD names on the major streams
   (v0.41; the workflow and the NHD fetch untested live); every reach
@@ -153,6 +142,60 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.43.0 (beta): valleys on the lidar at 3 m (a pilot), and the v42 fixes
+
+Sam reviewed the Kingman v42 results on 23 Oct and was not convinced they
+were the final product; he asked whether a 1 m run of the whole field
+office over the weekend would fix it. It cannot be a weekend run (23
+billion cells at 1 m; the 10 m pass needed ~70 GB for 0.4 billion, so 1 m
+has to be tiled, ~5 days of compute and ~80 GB of lidar downloaded again)
+and resolution is not the main weakness (form status is decisive for 39%
+of the length; 17% of the lidar reaches have no stream type; fire is
+missing; the sensitivity weights are a draft; nothing is validated). What
+a finer DEM does improve is the valley side: 11% of the length is in
+valleys under three 10 m cells wide, the 10 m confined class is nearly
+empty, the polygons are 10 m stair-steps. So, before any office-wide run:
+
+- **`fine_valleys="pilot"`** (toolbox: Options > *Valleys again on the
+  lidar at 3 m*; CLI `--fine-valleys pilot`): level A's valley pass run
+  again on the 3DEP lidar resampled to 3 m (`fine_cell_m`), HUC12 by
+  HUC12, for three headwater HUC12s with lidar, one per setting (the
+  most confined, the most fan and piedmont, the most alluvial valley, by
+  10 m stream length), with the same stream threshold and the same
+  (calibrated) confinement breaks. Each is compared with the 10 m pass:
+  stream km, valley type and confinement agreement by length (each 3 m
+  reach against the nearest 10 m reach within three 10 m cells), confined
+  and unresolved shares, valley width ratio, valley extent area, the
+  largest type changes. RESULTS.md *Valleys on the lidar at 3 m*,
+  `A_fine/comparison_3m.csv`, merged `valley_types_3m` and
+  `valley_extent_3m` (styled like the 10 m ones in the toolbox).
+  Headwater because a tile cut to one HUC12 only knows the drainage
+  inside it; an office-wide 3 m pass needs the inflow from the HUC12s
+  above carried in first (not built).
+- **Fire step**: each NIFC perimeter is repaired on its own (make_valid
+  structure, then the zero buffer, then make_valid) and one nothing can
+  repair is dropped (`dropped_unrepairable`), because on Kingman GEOS's
+  make_valid itself threw "Overlay input is mixed-dimension" and the
+  whole step failed twice; the per-HUC12 burned share survives a union
+  GEOS refuses.
+- **`huc12_mouth`** on the major streams from the HUC12 polygon the mouth
+  point falls in (the traced level A reaches carry no code; all 681 were
+  blank on v42).
+- **Toolbox styling**: ArcGIS Pro reports a GeoPackage layer as
+  `Instance=...\x.gpkg,Dataset=main.%x`; `plain_source` turns that into a
+  path, so GeoPackage outputs are named and coloured again (they came in
+  grey as "main.major_streams").
+- v0.42.2's summary blanks → 0 is in this release.
+
+Run plan (Sam, 23 Oct): the project tool once more on `S:\kingman\geolens_v42`
+with v0.43 at 5 pm AZ, same settings plus the 3 m pilot: the fire step is
+retried, the four failed HUC12s are retried, the finishing steps rebuilt
+with the fixes, and the pilot runs (about an hour or two). The v42 layers
+must be out of the ArcGIS map first (Windows locks open GeoPackages).
+Then: Sam scores a validation sample (to build), we settle the form rules
+for the "check" combinations and the sensitivity weights, and decide on
+an office-wide 3 m pass from the pilot's comparison.
 
 ## v0.42.2 (beta): a share of nothing is 0, not blank
 

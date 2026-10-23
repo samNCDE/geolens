@@ -1611,6 +1611,10 @@ def run_project(
     major_streams_km2: float = 25.0,
     sensitivity_weights: dict | str | None = None,
     level_a_cell_m: float | None = None,
+    fine_valleys: str = "none",
+    fine_huc12s: str | None = None,
+    fine_count: int = 3,
+    fine_cell_m: float = 3.0,
 ) -> dict[str, Any]:
     """A whole project area, any size: valleys everywhere, channels on lidar.
 
@@ -1655,6 +1659,10 @@ def run_project(
     weight; ``geolens.synthesis.COMPONENTS`` by default). ``level_a_cell_m``
     (default 10) asks for a coarser level A grid, fetched as such, for a
     reconnaissance run within a laptop's or a cloud runner's memory.
+    ``fine_valleys="pilot"`` runs the valley pass again on the lidar at
+    ``fine_cell_m`` (3 m) for ``fine_count`` headwater HUC12s, one per
+    setting (mountain, fans and piedmonts, alluvial valley), and compares
+    each with the 10 m pass; ``"listed"`` takes ``fine_huc12s`` instead.
     """
     from .project import run_project as _rp
 
@@ -1669,7 +1677,9 @@ def run_project(
                keep_lidar_dem=keep_lidar_dem,
                major_streams_km2=major_streams_km2,
                sensitivity_weights=sensitivity_weights,
-               level_a_cell_m=level_a_cell_m)
+               level_a_cell_m=level_a_cell_m, fine_valleys=fine_valleys,
+               fine_huc12s=fine_huc12s, fine_count=fine_count,
+               fine_cell_m=fine_cell_m)
 
 
 def check_services(timeout: int = 20) -> dict[str, Any]:

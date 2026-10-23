@@ -802,3 +802,46 @@ def test_soils_that_arrive_after_the_pass_retype_the_valleys(stubs, tmp_path,
     assert not any("USGS geology, not SSURGO" in w for w in status["warnings"])
     vt = gpd.read_file(res["valley_types"])
     assert (vt["material_class"] == "alluvial").any()
+
+
+def test_valleys_again_on_the_lidar_at_3_m_for_a_pilot(stubs, tmp_path):
+    """v0.43: the valley pass again on the lidar, HUC12 by HUC12, at 3 m,
+    for a pilot, compared with the 10 m pass. Here the "lidar" is the same
+    synthetic DEM, so the two must largely agree; what is checked is that
+    the pilot is chosen, the tile fetched at the finer cell, the pass run,
+    the comparison written, the layers merged, the report said, and that a
+    second run carries on instead of starting again."""
+    bnd = tmp_path / "boundary.gpkg"
+    gpd.GeoDataFrame({"name": ["field office"]},
+                     geometry=[box(405000, 4503000, 425000, 4517000)],
+                     crs=UTM).to_file(bnd, driver="GPKG")
+    out = tmp_path / "proj"
+    kw = dict(level_b="pilot", pilot_count=1, stream_threshold_km2=3.0,
+              geology=None, section_plots=False, soils=False, data="none",
+              fine_valleys="pilot", fine_count=1)
+    res = project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    status = json.loads((out / "project.json").read_text())
+    fine = status["fine_valleys"]
+    # West Wash is the only HUC12 with lidar; Upper West drains into it, so
+    # it is not a headwater one and the basis says so
+    assert fine["chosen"] == ["150100000101"]
+    assert "no headwater" in fine["why"]["basis"]
+    assert "carries only the drainage inside it" in (out / "RESULTS.md").read_text()
+    rec = fine["huc12"]["150100000101"]
+    assert rec["status"] == "done", rec
+    assert 3.0 in stubs["res"]                         # the tile at 3 m
+    c = rec["compare"]
+    assert c["km_10m"] > 0 and c["km_fine"] > 0
+    assert c["matched_share"] > 0.5
+    assert 0.0 <= c["landscape_type_agreement"] <= 1.0
+    assert Path(res["valley_types_3m"]).exists()
+    assert Path(res["valley_extent_3m"]).exists()
+    assert (out / "A_fine" / "comparison_3m.csv").exists()
+    report = (out / "RESULTS.md").read_text()
+    assert "## Valleys on the lidar at 3 m (pilot)" in report
+    assert "| 150100000101 |" in report
+
+    fetched = len(stubs["fetch"])
+    again = project.run_project(str(bnd), guard=Guard(out_dir=out), **kw)
+    assert len(stubs["fetch"]) == fetched, "nothing fetched again"
+    assert Path(again["valley_types_3m"]).exists()
