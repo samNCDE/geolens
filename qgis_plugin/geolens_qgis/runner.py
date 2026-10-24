@@ -146,6 +146,22 @@ def _portable_env(root: Path) -> dict[str, str]:
             "GEOLENS_NETRC": str(home / "_netrc")}
 
 
+def env_data_dirs(root: Path) -> dict[str, str]:
+    """GDAL_DATA and PROJ_DATA (and PROJ_LIB) for a conda environment, as
+    ``conda activate`` sets them: its own ``Library\\share\\gdal`` and
+    ``...\\proj`` on Windows, ``share/gdal`` and ``share/proj`` elsewhere.
+    Without them GDAL warns "GDAL_DATA is not defined" and pyogrio "Could
+    not detect GDAL data files" (seen on the portable environment, v0.45.2).
+    A venv's wheels carry their own data: nothing is set for one."""
+    out: dict[str, str] = {}
+    for base in (root / "Library" / "share", root / "share"):
+        if "GDAL_DATA" not in out and (base / "gdal").is_dir():
+            out["GDAL_DATA"] = str(base / "gdal")
+        if "PROJ_DATA" not in out and (base / "proj" / "proj.db").is_file():
+            out["PROJ_DATA"] = out["PROJ_LIB"] = str(base / "proj")
+    return out
+
+
 def clean_env(python: str, extra: dict[str, str] | None = None
               ) -> dict[str, str]:
     """The environment for the geolens Python: QGIS's settings removed, the
@@ -161,6 +177,7 @@ def clean_env(python: str, extra: dict[str, str] | None = None
             if p and not any(m in p.lower() for m in _HOST_PATH_MARKERS)]
     env["PATH"] = os.pathsep.join([str(p) for p in first if p.exists()]
                                   + rest)
+    env.update(env_data_dirs(root))
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
     src = release_src()
@@ -496,6 +513,13 @@ def launcher_bat(python: str, settings: str, out_dir: str, title: str,
         f'set "PATH={dirs};%PATH%"',
         "for %%V in (" + " ".join(_STRIP_ENV) + " GEOLENS_PROGRESS "
         "GEOLENS_NO_PROGRESS) do set \"%%V=\"",
+        "rem the environment's own GDAL and PROJ data, as conda activate sets them",
+        'if exist "%ENVDIR%\\Library\\share\\gdal\\" '
+        'set "GDAL_DATA=%ENVDIR%\\Library\\share\\gdal"',
+        'if exist "%ENVDIR%\\Library\\share\\proj\\proj.db" '
+        'set "PROJ_DATA=%ENVDIR%\\Library\\share\\proj"',
+        'if exist "%ENVDIR%\\Library\\share\\proj\\proj.db" '
+        'set "PROJ_LIB=%ENVDIR%\\Library\\share\\proj"',
         *sets,
         'set "PYTHONIOENCODING=utf-8"',
         'set "PYTHONUNBUFFERED=1"',
@@ -551,7 +575,10 @@ def _sh(s: str) -> str:
 def launcher_sh(python: str, settings: str, out_dir: str, title: str,
                 function: str, src: str | None = None,
                 extra: dict[str, str] | None = None, by: str = "") -> str:
-    env = dict(extra or {})
+    root = Path(python).resolve().parent
+    if root.name.lower() in ("bin", "scripts"):
+        root = root.parent
+    env = {**env_data_dirs(root), **dict(extra or {})}
     if src:
         env = {"PYTHONPATH": src, "GEOLENS_SRC": src, **env}
     lines = [

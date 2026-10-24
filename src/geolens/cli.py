@@ -691,7 +691,9 @@ def main(argv: list[str] | None = None) -> int:
 
     except GeolensError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        # 3: another run is working in that project folder (run_project.bat
+        # and the run launchers do not try again for that)
+        return 3 if type(exc).__name__ == "ProjectBusy" else 1
     except Exception as exc:  # pragma: no cover
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2

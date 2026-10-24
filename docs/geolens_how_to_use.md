@@ -15,13 +15,13 @@ date: "Version 0.45 (beta), October 2026"
 ## 1.1 Install
 
 1. Unzip the release somewhere permanent on the data drive, for example `S:\geolens\gl45`. Each release goes in a folder of its own: a run in progress uses the files of the release it was started from, so never unzip a new release over a folder a run is using.
-2. Double-click **`install_windows.bat`** once. It builds geolens's own Python environment (5–15 minutes, mostly downloading) and tests itself on a synthetic valley. Updating later: unzip the new release into a new folder and run its installer; the environment is kept.
-3. **Or portable, on an external drive:** double-click **`setup_portable.bat`** instead. Everything, Python included, stays on the drive and nothing is installed on the computer, so the drive can be handed to a colleague.
+2. Double-click **`install_windows.bat`** once. The computer needs no Python and no admin rights: with conda on it (Miniforge, Anaconda or Miniconda) the installer builds a conda environment named `geolens`; without conda it builds geolens's own Python in `env` beside the release. It takes 5–15 minutes, mostly downloading, and tests itself on a synthetic valley. Updating later: unzip the new release into a new folder and run its installer; the environment is kept.
+3. **Or portable, on an external drive:** double-click **`setup_portable.bat`** instead (or run `install_windows.bat --portable`). Everything, Python included, stays on the drive and nothing is installed on the computer, so the drive can be handed to a colleague. Keep the folder near the top of the drive (for example `E:\geolens`): Windows limits a path to 260 characters.
 
 ## 1.2 Add the toolbox to ArcGIS Pro
 
 1. In the Catalog pane, right-click *Toolboxes ▸ Add Toolbox* and choose `arcgis_toolbox\geolens.pyt` in the release folder.
-2. Run *0 Setup ▸ Find the geolens environment*. It should report "geolens 0.45.1 found". If it cannot find the environment, give it the `python.exe` the installer printed; it remembers it.
+2. Run *0 Setup ▸ Find the geolens environment*. It should report "geolens 0.45.2 found". If it cannot find the environment, give it the `python.exe` the installer printed; it remembers it.
 3. Run *0 Setup ▸ Check internet services* once on a new computer or network: it says which of the download services this machine can reach.
 4. Only for the Sentinel-1 radar tool: *0 Setup ▸ Save Earthdata login* with your own free NASA Earthdata account. The password goes into your Windows profile, never into geolens or its records.
 
@@ -128,7 +128,7 @@ The layers from the other tools are added and coloured when the tool finishes. S
 
 ## 3.1 Drag and drop
 
-Drag a boundary file (shapefile, GeoPackage, GeoJSON or KML) onto **`run_project.bat`** in the release folder, or double-click it and paste a map service URL and a where clause. The project folder is made beside the boundary.
+Drag a boundary file (shapefile, GeoPackage, GeoJSON or KML) onto **`run_project.bat`** in the release folder, or double-click it and paste a map service URL and a where clause. The project folder is made beside the boundary. On a computer where geolens has no Python yet, it builds geolens's own first (once, 5–15 minutes) and then starts the project; a run that stops with an error is started again a minute later, up to five times, and carries on where it stopped.
 
 ## 3.2 A command window
 
@@ -193,6 +193,9 @@ When a review has made a **validation sample** (`review\validation_sample.gpkg` 
 
 | What you see | What to do |
 |---|---|
+| `install_windows.bat` says "No Python found", or stops at once | That was the installer before v0.45.2. Use v0.45.2 or later, which builds geolens's own Python when the computer has no conda, or double-click `setup_portable.bat`. |
+| `setup_portable.bat` stops with "Package cache error", or says the folder's path is too long | Windows limits a path to 260 characters. Use v0.45.2 or later, and keep the geolens folder near the top of the drive (for example `E:\geolens`). |
+| `setup_portable.bat` cannot download micromamba or the packages | Check the internet connection and run it again: it carries on. On a network that needs a proxy, set `HTTPS_PROXY` in a command window and run it from there. |
 | "The geolens Python environment was not found" | Run *Find the geolens environment* and give it the environment's `python.exe`; or rerun the installer. |
 | "Another geolens run (process N) is working in …" | A run is already working in that folder (perhaps in a window behind others). Let it finish or close its window. A lock left by a run that died is taken over automatically. |
 | The window says "Trying again in 60 seconds" | A step failed (often a service that did not answer). It carries on by itself; after five tries it stops and says so: double-click `run_geolens.bat` to carry on later. |

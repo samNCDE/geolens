@@ -142,18 +142,20 @@ sandy washes now come out D (braided) and small incised channels B, where the
 old method said C. The old picker still runs as a check: purple dashed on
 every section plot, <code>picker_*</code> columns, <code>picker_bank_top</code> points. Where the
 two disagree, look. <code>bankfull_method="picker"</code> brings the old behaviour back.</p>
-<h2>Install (Windows; you need to be an admin on the machine)</h2>
+<h2>Install (Windows; no Python or admin rights needed)</h2>
 <ol>
 <li>Unzip the folder somewhere permanent, e.g. <code>Documents\Tools\geolens</code>.</li>
 <li>Double-click <strong><code>install_windows.bat</code></strong>. The first time takes 5–15 minutes,
-    mostly downloading. It builds its own Python environment, tests itself on
-    a synthetic valley with a known channel, and prints the command that
-    starts the notebook.</li>
+    mostly downloading. With conda on the computer it builds a conda
+    environment named <code>geolens</code>; without conda it builds geolens's own Python
+    in <code>env</code> beside this file (v0.45.2). Either way it tests itself on a
+    synthetic valley with a known channel, and prints what to do next.</li>
 <li><strong>Updating:</strong> unzip the new version anywhere and run its installer. It
     finds the existing install, updates the code in place, and leaves the
     environment alone.</li>
 </ol>
-<p><strong>Or portable, on an external drive.</strong> Unzip onto the drive and
+<p><strong>Or portable, on an external drive.</strong> Unzip near the top of the drive
+(e.g. <code>E:\geolens</code>: Windows limits a path to 260 characters) and
 double-click <strong><code>setup_portable.bat</code></strong> instead. It puts geolens's own Python
 in <code>env</code> on the drive, about 3 GB, and needs no admin rights. Nothing is
 installed on the computer, and temporary files and caches stay on the
@@ -161,7 +163,8 @@ drive, so the drive can be passed to a colleague whose computer has ArcGIS
 Pro.</p>
 <p><strong>Then, to run a whole project on its own:</strong> drag the project's boundary
 onto <strong><code>run_project.bat</code></strong>. No ArcGIS needed; the results go in a folder
-beside the boundary.</p>
+beside the boundary. On a computer with no geolens Python yet, it builds
+one first (once) and then starts the project.</p>
 <p><a href="INSTALL.md">INSTALL.md</a> covers the manual route and what to do when the
 install fails.</p>
 <h2>Run it</h2>
@@ -204,7 +207,7 @@ ArcGIS.</p>
     Add Toolbox</em> and choose <code>arcgis_toolbox\geolens.pyt</code> in the geolens
     folder.</li>
 <li><strong>Check it:</strong> run <em>0 Setup ▸ Find the geolens environment</em>. It should
-    report "geolens 0.45.1 found". If it can't find the environment, give it
+    report "geolens 0.45.2 found". If it can't find the environment, give it
     the environment's <code>python.exe</code>, which the installer prints. The tool
     remembers it.
     <em>0 Setup ▸ Check internet services</em> says which download services this

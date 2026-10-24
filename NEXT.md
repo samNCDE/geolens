@@ -3,9 +3,12 @@
 **Start with [OVERVIEW.md](OVERVIEW.md)** — what the tool does, how to run it,
 and what to trust. This file is the working log behind it.
 
-## Pick up here (state on 23 Oct 2026, Friday 2:30 pm Arizona)
+## Pick up here (state on 23 Oct 2026, Friday 6:15 pm Arizona)
 
-**State.** v0.45.1 beta (v0.45.0's code; the v43 run uses v0.45.0 in `gl45`). **Work only on drive S:** (Sam's instruction; C:
+**State.** v0.45.2 beta (the Windows installers work on a computer without
+Python, and in a folder on an external drive: see its entry; the v43 run
+uses v0.45.0 in `gl45`). The installer test folder `S:\geolens\test_0452`
+(a portable env, about 3 GB, and a small test project) can be deleted. **Work only on drive S:** (Sam's instruction; C:
 is nearly full). The toolbox folders `S:\geolens\gl33` (the one in Sam's
 kingman ArcGIS project) and `S:\geolens\gl42` both get each release's
 changed files, never while a run uses them; `gl44` and `gl45` are frozen
@@ -146,6 +149,86 @@ pyproject.toml and install.py. Existing environments are unaffected.
 From v0.30.1 an environment upgraded past the cap is caught in three
 places: *Find the geolens environment* warns, `install.py --check` reports
 it as a problem, and the routing error names the fix.
+
+## v0.45.2 (beta): the Windows installers work on a computer without Python
+
+Sam, 23 Oct, 5:00–5:15 pm AZ, testing a release on an external drive on
+another PC: "i think windowsinstall is broken, at least its broken in the
+sense it doesn't download and install python"; "the drag shapefile on to
+bat method doesnt work either"; "run an update, push to github".
+
+- **`install_windows.bat`** never downloaded a Python: with none it said
+  "install Miniforge", and on most Windows 10/11 PCs `where python` finds
+  the Microsoft Store's `python.exe` shortcut (in `WindowsApps`), which is
+  not a Python, so install.py never ran ("Finished with problems"). Now it
+  hands over to install.py only with a working conda Python (Miniforge,
+  Anaconda or Miniconda in the usual places, a `conda` on PATH, or a conda
+  python on PATH: one with `conda-meta` beside it, tried by running it).
+  Otherwise, and when the folder has its own `env` already, it builds
+  geolens's own Python with `setup_portable.bat`. `--portable` does that
+  even where conda is installed; `--which` only reports what it would use
+  and why each candidate was passed over. python.org's and ArcGIS Pro's
+  Pythons are no longer used to run install.py (it would have made a pip
+  venv, or used ArcGIS Pro's conda).
+- **`run_project.bat`** (drag a boundary on) stopped with "No geolens
+  environment found" on such a computer, and never looked for install.py's
+  venv (`.venv`) or the environment it records (`~\.geolens\python.txt`).
+  Now it looks there too, and with no environment at all it builds
+  geolens's own (one key press) and then runs the project. It puts the
+  environment's DLL folders first on PATH and clears other programs'
+  PYTHONHOME, GDAL_DATA, PROJ_LIB and the like, as the run launchers do;
+  checks that the environment loads its packages before starting; takes a
+  shapefile's .dbf/.shx/.prj for its .shp; reports a boundary that is not
+  there; and starts a run that stopped with an error again a minute later,
+  up to five times, unless it stopped before it began (no `project.json`)
+  or another run is working in the folder (the CLI now exits with 3 for
+  that).
+- **The portable setup could not finish anywhere but at the top of a drive**
+  (found trying it on Sam's PC, 23 Oct 5:31 pm): micromamba 2.9 unpacks
+  each package under `pkgs\https\conda.anaconda.org\conda-forge\<subdir>\`,
+  and debugpy's and jupyterlab's deepest files are 180-188 characters below
+  `pkgs`. Under `<release>\.portable\mamba\pkgs` that passes Windows's
+  260-character limit, the file is silently not written, and the setup
+  stops with "critical libmamba Package cache error" (the old script had
+  the same problem). The cache now goes in `geolens_pkgs` at the top of the
+  release's drive (else the system drive) and is removed when the setup
+  has finished; the old cache under `.portable` is removed. The
+  environment's own deepest files are about 160 characters below `env`, so
+  a release folder whose path is longer than 90 characters is refused
+  before anything is downloaded, with what to do. An `env` left unfinished
+  (no python.exe, or an empty `conda-meta\history`) is removed and built
+  again; `run_project.bat` mends a half-built one by itself, once.
+- **`setup_portable.bat`**: micromamba 2.9.0 from GitHub with Windows's own
+  `curl.exe`, then PowerShell (which also uses a proxy set in Windows), then
+  micro.mamba.pm (unpacked with Windows's own `tar.exe`, not Git's); a
+  micromamba that does not run is downloaded again; `env` left without its
+  python.exe by a setup that stopped is built again; USERPROFILE and
+  LOCALAPPDATA point at the drive while it runs (micromamba records the
+  environments it makes in the user profile); no pause when another
+  script calls it (`GEOLENS_NO_PAUSE`). `start_notebook_portable.bat` got
+  the same PATH and settings hygiene.
+- Tests: `tests/test_batch_files.py` reads the batch files as cmd.exe would:
+  every `goto`/`call` label exists once (it caught one placed twice while
+  this was written), no bare `)` in an `echo` inside a block, ASCII; and
+  what each script must do on a computer without Python.
+- **The environment's own GDAL and PROJ data.** The scripts cleared other
+  programs' GDAL_DATA and PROJ_LIB but set nothing, so GDAL warned "GDAL_DATA
+  is not defined" and pyogrio "Could not detect GDAL data files" on the
+  portable environment. `setup_portable.bat`, `run_project.bat`,
+  `start_notebook_portable.bat`, the toolbox's runner (`env_data_dirs`, in
+  `clean_env` and both launchers) now set GDAL_DATA, PROJ_DATA and PROJ_LIB
+  to the environment's own `Library\share\gdal` and `...\proj`, as `conda
+  activate` does (nothing for a venv, whose wheels carry their own).
+- **Tried on Windows** (Sam's PC through the weekend queue, in
+  `S:\geolens\test_0452` only; his environment, C: and the v43 run were not
+  touched; 23 Oct 5:30-6:10 pm AZ): `install_windows.bat --which` chose his
+  Anaconda; `--portable` downloaded micromamba 2.9.0 with curl and built the
+  environment (265 conda-forge packages, 411 MB, python 3.11.17, numpy
+  2.2.6, numba 0.61.2, GDAL 3.12.3, rasterio 1.4.4, geopandas 1.2.0) in
+  3 minutes after the path-length fix, and the smoke test passed;
+  `run_project.bat` found it, checked it and refused a missing boundary;
+  and a small project (the HUC12s at Hualapai Peak, 10 m only) ran on it
+  end to end in 4.5 minutes.
 
 ## v0.45.1 (beta): ArcGIS Pro and its launcher on the front page
 

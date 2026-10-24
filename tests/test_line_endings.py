@@ -60,4 +60,4 @@ def test_the_launcher_runs_a_project_with_the_drives_own_python():
     assert '"%PY%" -m geolens.cli project "%BOUNDARY%"' in text
     assert text.index(r"%ROOT%\env\python.exe") < text.index(r"envs\geolens")
     assert r'set "PYTHONPATH=%ROOT%\src"' in text     # this release's geolens
-    assert text.rstrip().endswith("exit /b %RC%") and "pause" in text
+    assert "exit /b %RC%" in text and "pause" in text   # more: test_batch_files

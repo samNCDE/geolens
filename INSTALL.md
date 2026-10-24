@@ -4,7 +4,10 @@
 
 Unzip this folder somewhere, then:
 
-**Windows** — double-click `install_windows.bat`
+**Windows** — double-click `install_windows.bat`. No Python is needed: with
+conda on the computer it builds a conda environment named `geolens`, and
+without conda it builds geolens's own Python in `env` beside it (v0.45.2;
+the same as `setup_portable.bat`).
 
 **macOS / Linux** — `bash install.sh`
 
@@ -93,9 +96,11 @@ python install.py --venv      # throwaway test environment
 python install.py             # permanent conda env (or update it in place)
 ```
 
-With no conda on the machine the installer falls back to a venv and says so;
-installing [Miniforge](https://conda-forge.org/download/) and re-running gets
-you the permanent environment.
+With no conda on the machine `python install.py` falls back to a venv and
+says so; installing [Miniforge](https://conda-forge.org/download/) and
+re-running gets you the permanent environment. `install_windows.bat` does
+not go that way (v0.45.2): without conda it builds geolens's own conda-forge
+Python in `env` beside the release with `setup_portable.bat`.
 
 The hard part of this package isn't geolens, it's the GDAL stack underneath it
 (rasterio, fiona, geopandas, pyproj). Those four carry compiled binaries that
@@ -117,7 +122,9 @@ own GDAL/PROJ/GEOS bundled, so it works — it just is not permanent.
 
 | | |
 |---|---|
-| `install_windows.bat` | double-click; finds a Python and runs `install.py` |
+| `install_windows.bat` | double-click; with conda, runs `install.py` with it; without, builds geolens's own Python in `env` (`setup_portable.bat`) |
+| `install_windows.bat --portable` | geolens's own Python in `env` beside the release, even where conda is installed |
+| `install_windows.bat --which` | only say which Python it would use, and why the others were passed over |
 | `python install.py` | the installer; permanent conda env `geolens` (or update it in place) |
 | `python install.py --check` | **diagnose only** — installs nothing, tells you what's wrong |
 | `python install.py --smoke` | run the real workflow on a synthetic valley |
@@ -128,7 +135,8 @@ own GDAL/PROJ/GEOS bundled, so it works — it just is not permanent.
 | `python install.py --no-extras` | core only, skip the flow-routing stack |
 | `python install.py --force-rebuild` | build the environment again even though a working install was found |
 
-Arguments pass through the `.bat`, so `install_windows.bat --conda` works too.
+Other arguments pass through the `.bat` to `install.py`, so
+`install_windows.bat --conda` works too.
 
 ---
 
@@ -208,8 +216,26 @@ already prefers 3.12 or 3.11 if one is installed. Otherwise: `py -3.11
 install.py`, or `python install.py --conda`.
 
 **The `.bat` can't find Python**
-Install [Miniforge](https://conda-forge.org/download/) — small, and it's the
-conda that works best with this stack — then double-click again.
+It no longer needs one (v0.45.2): without conda it builds geolens's own
+Python with `setup_portable.bat`. The Microsoft Store's `python.exe` shortcut
+(in `WindowsApps`) is not a Python and is passed over;
+`install_windows.bat --which` says what it found and why each was passed over.
+
+**`setup_portable.bat` stops with "critical libmamba Package cache error"**
+That was Windows's 260-character path limit (fixed in v0.45.2): micromamba
+unpacks packages into a deep cache folder, and a few packages have files
+180 characters deep. v0.45.2 keeps the cache in `geolens_pkgs` at the top
+of the drive and removes it afterwards. It also refuses a release folder
+whose path is over 90 characters (move it nearer the top of the drive,
+e.g. `E:\geolens`), and builds again an `env` a stopped setup left behind.
+
+**`setup_portable.bat` cannot download micromamba or the packages**
+It tries Windows's own `curl.exe`, then PowerShell (which also uses a proxy
+set in Windows), from GitHub and then from micro.mamba.pm. micromamba does
+not read the proxy set in Windows: on a network that needs a proxy, set
+`HTTPS_PROXY` (e.g. `set HTTPS_PROXY=http://proxy.example:8080`) in a command
+window and run `setup_portable.bat` from it. A setup that stopped part way
+carries on when run again.
 
 ---
 

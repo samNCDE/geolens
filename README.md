@@ -57,7 +57,7 @@ The reasons, with the numbers behind them, are in [START_HERE.md](START_HERE.md)
    Toolbox** and choose **`arcgis_toolbox\geolens.pyt`** in the release
    folder.
 4. Run **0 Setup ▸ Find the geolens environment**. It should report
-   "geolens 0.45.1 found". If not, give it the `python.exe` the installer
+   "geolens 0.45.2 found". If not, give it the `python.exe` the installer
    printed; it remembers it.
 5. Optional: **0 Setup ▸ Check internet services** says which download
    services this computer can reach.
@@ -124,15 +124,21 @@ wrong: [`docs/geolens_how_to_use.pdf`](docs/geolens_how_to_use.pdf).
 
 ## Install (Windows)
 
-You need admin rights on the machine, and either Miniforge/Anaconda or Python
-3.11+.
+The computer needs nothing beforehand: no Python, and no admin rights.
 
-1. Download the release zip and unzip it somewhere permanent, e.g.
-   `Documents\Tools\geolens`.
-2. Double-click **`install_windows.bat`**. It builds its own Python
-   environment (5–15 minutes the first time), tests itself on a synthetic
-   valley, and prints what to do next. Running a newer release's installer
-   later updates the code in place and leaves the environment alone.
+1. Download the release zip (or on GitHub, **Code ▸ Download ZIP**) and unzip
+   it somewhere permanent, e.g. `Documents\Tools\geolens`, or onto an
+   external drive.
+2. Double-click **`install_windows.bat`**. With conda on the computer
+   (Miniforge, Anaconda or Miniconda) it builds a permanent conda environment
+   named `geolens`. Without conda it builds geolens's own Python in `env`
+   beside the release instead (v0.45.2): it downloads one program
+   (micromamba) and the conda-forge packages, about 3 GB, and installs
+   nothing into Windows. Either way it takes 5–15 minutes the first time,
+   tests itself on a synthetic valley, and prints what to do next. Running a
+   newer release's installer later updates the code in place and leaves the
+   environment alone. If Windows asks whether to run a file from the
+   internet, choose **More info ▸ Run anyway**.
 3. In ArcGIS Pro: **Catalog ▸ Toolboxes ▸ Add Toolbox ▸
    `arcgis_toolbox\geolens.pyt`**, then run **0 Setup ▸ Find the geolens
    environment** ([Run it from ArcGIS Pro](#run-it-from-arcgis-pro)).
@@ -142,9 +148,13 @@ the environment the installer built, so a DEM too big for memory cannot crash
 ArcGIS. Manual installs and troubleshooting are in [INSTALL.md](INSTALL.md).
 
 **Portable, on an external drive (nothing on the computer).** Unzip the
-release onto the drive and double-click **`setup_portable.bat`**. It builds
-geolens's own Python in `env` beside it (about 3 GB, internet needed once),
-with no installer, registry or user-profile changes. The toolbox then uses
+release onto the drive and double-click **`setup_portable.bat`** (or run
+`install_windows.bat --portable`, which does the same even where conda is
+installed). It builds geolens's own Python in `env` beside it (about 3 GB,
+internet needed once), with no installer, registry or user-profile changes.
+Keep the folder near the top of the drive (e.g. `E:\geolens`): Windows
+limits a path to 260 characters, and the environment's deepest files are
+about 160 characters below it. The toolbox then uses
 that `env`, and temporary files, caches and the Earthdata login stay on the
 drive. The drive letter can change, so the drive can be handed to someone
 else. Their computer needs only ArcGIS Pro.
@@ -158,7 +168,9 @@ depths, Rangeland Analysis Platform cover and its trends since 1986), and
 writes it all to `<boundary name>_geolens` beside the boundary: the layers,
 one summary table per HUC12 of what it is made of and how it is behaving,
 and `RESULTS.md` saying what ran and how far to trust it. Run it again to
-carry on where it stopped. The same from a shell:
+carry on where it stopped. On a computer where geolens has no Python yet,
+it builds geolens's own first (once, 5–15 minutes) and then runs the
+project. The same from a shell:
 
 ```
 geolens project boundary.gpkg

@@ -64,18 +64,20 @@ old method said C. The old picker still runs as a check: purple dashed on
 every section plot, `picker_*` columns, `picker_bank_top` points. Where the
 two disagree, look. `bankfull_method="picker"` brings the old behaviour back.
 
-## Install (Windows; you need to be an admin on the machine)
+## Install (Windows; no Python or admin rights needed)
 
 1. Unzip the folder somewhere permanent, e.g. `Documents\Tools\geolens`.
 2. Double-click **`install_windows.bat`**. The first time takes 5–15 minutes,
-   mostly downloading. It builds its own Python environment, tests itself on
-   a synthetic valley with a known channel, and prints the command that
-   starts the notebook.
+   mostly downloading. With conda on the computer it builds a conda
+   environment named `geolens`; without conda it builds geolens's own Python
+   in `env` beside this file (v0.45.2). Either way it tests itself on a
+   synthetic valley with a known channel, and prints what to do next.
 3. **Updating:** unzip the new version anywhere and run its installer. It
    finds the existing install, updates the code in place, and leaves the
    environment alone.
 
-**Or portable, on an external drive.** Unzip onto the drive and
+**Or portable, on an external drive.** Unzip near the top of the drive
+(e.g. `E:\geolens`: Windows limits a path to 260 characters) and
 double-click **`setup_portable.bat`** instead. It puts geolens's own Python
 in `env` on the drive, about 3 GB, and needs no admin rights. Nothing is
 installed on the computer, and temporary files and caches stay on the
@@ -84,7 +86,8 @@ Pro.
 
 **Then, to run a whole project on its own:** drag the project's boundary
 onto **`run_project.bat`**. No ArcGIS needed; the results go in a folder
-beside the boundary.
+beside the boundary. On a computer with no geolens Python yet, it builds
+one first (once) and then starts the project.
 
 [INSTALL.md](INSTALL.md) covers the manual route and what to do when the
 install fails.
@@ -129,7 +132,7 @@ ArcGIS.
    Add Toolbox* and choose `arcgis_toolbox\geolens.pyt` in the geolens
    folder.
 2. **Check it:** run *0 Setup ▸ Find the geolens environment*. It should
-   report "geolens 0.45.1 found". If it can't find the environment, give it
+   report "geolens 0.45.2 found". If it can't find the environment, give it
    the environment's `python.exe`, which the installer prints. The tool
    remembers it.
    *0 Setup ▸ Check internet services* says which download services this
